@@ -57,7 +57,7 @@ This project was developed for ROS 2 Foxy (Ubuntu 20.04), Humble (Ubuntu 22.04) 
    ```bash
    mkdir -p ~/flexiv_ros2_ws/src
    cd ~/flexiv_ros2_ws/src
-   git clone https://github.com/flexivrobotics/flexiv_ros2.git -b humble
+   git clone https://github.com/flexivrobotics/flexiv_ros2.git -b humble-v1
    ```
 
 4. Install dependencies:
