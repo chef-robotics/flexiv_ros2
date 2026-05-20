@@ -1,5 +1,6 @@
-from ament_index_python.packages import get_package_share_directory
 import os
+import yaml
+from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -8,7 +9,7 @@ from launch.actions import (
     IncludeLaunchDescription,
     OpaqueFunction,
     RegisterEventHandler,
-    SetLaunchConfiguration,
+    SetEnvironmentVariable,
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.events import Shutdown
@@ -19,6 +20,7 @@ from launch_ros.parameter_descriptions import ParameterFile, ParameterValue
 from launch_ros.substitutions import FindPackageShare
 from launch.substitutions import (
     Command,
+    EnvironmentVariable,
     FindExecutable,
     LaunchConfiguration,
     PathJoinSubstitution,
@@ -32,13 +34,13 @@ def load_yaml(package_name, file_path, replacements=None):
 
     try:
         with open(absolute_file_path, "r") as file:
-            file_content = file.read()
-            if replacements:
-                for key, value in replacements.items():
-                    file_content = file_content.replace(key, value)
-            import yaml
+            yaml_content = file.read()
 
-            return yaml.safe_load(file_content)
+        if replacements:
+            for placeholder, replacement in replacements.items():
+                yaml_content = yaml_content.replace(placeholder, replacement)
+
+        return yaml.safe_load(yaml_content)
     except (
         EnvironmentError
     ):  # parent of IOError, OSError *and* WindowsError where available
@@ -46,8 +48,10 @@ def load_yaml(package_name, file_path, replacements=None):
 
 
 def launch_setup(context):
-    rizon_type = LaunchConfiguration("rizon_type")
+    # Initialize Arguments
+    robot_type = LaunchConfiguration("robot_type")
     robot_sn = LaunchConfiguration("robot_sn")
+    robot_sn_str = robot_sn.perform(context)
     rdk_control_mode = LaunchConfiguration("rdk_control_mode")
     start_rviz = LaunchConfiguration("start_rviz")
     load_gripper = LaunchConfiguration("load_gripper")
@@ -55,10 +59,8 @@ def launch_setup(context):
     load_mounted_ft_sensor = LaunchConfiguration("load_mounted_ft_sensor")
     use_fake_hardware = LaunchConfiguration("use_fake_hardware")
     fake_sensor_commands = LaunchConfiguration("fake_sensor_commands")
-    robot_controller = LaunchConfiguration("robot_controller")
-    external_axis_type = LaunchConfiguration("external_axis_type")
-    external_axis_prefix = LaunchConfiguration("external_axis_prefix")
-    arm_prefix = LaunchConfiguration("arm_prefix")
+    warehouse_sqlite_path = LaunchConfiguration("warehouse_sqlite_path")
+    start_servo = LaunchConfiguration("start_servo")
     gripper_ready_gate_condition = PythonExpression(
         [
             "'",
@@ -69,24 +71,12 @@ def launch_setup(context):
         ]
     )
 
-    robot_sn_str = robot_sn.perform(context)
-    arm_prefix_str = arm_prefix.perform(context)
-    external_axis_prefix_str = external_axis_prefix.perform(context)
-    external_axis_type_str = external_axis_type.perform(context)
-
-    # Construct prefix
-    prefix_str = ""
-
-    if arm_prefix_str and robot_sn_str:
-        prefix_str = arm_prefix_str + "_" + robot_sn_str + "_"
-    elif arm_prefix_str or robot_sn_str:
-        prefix_str = arm_prefix_str + robot_sn_str + "_"
-
     # Get URDF via xacro
     flexiv_urdf_xacro = PathJoinSubstitution(
-        [FindPackageShare("flexiv_description"), "urdf", "aico1.urdf.xacro"]
+        [FindPackageShare("flexiv_description"), "urdf", "flexiv.urdf.xacro"]
     )
 
+    # Get URDF via xacro
     robot_description_content = ParameterValue(
         Command(
             [
@@ -97,8 +87,8 @@ def launch_setup(context):
                 "robot_sn:=",
                 robot_sn,
                 " ",
-                "rizon_type:=",
-                rizon_type,
+                "robot_type:=",
+                robot_type,
                 " ",
                 "ros2_control:=true ",
                 "rdk_control_mode:=",
@@ -118,27 +108,15 @@ def launch_setup(context):
                 " ",
                 "fake_sensor_commands:=",
                 fake_sensor_commands,
-                " ",
-                "external_axis_type:=",
-                PythonExpression(
-                    ["'", external_axis_type, "'.lower().replace('-', '_')"]
-                ),
-                " ",
-                "external_axis_prefix:=",
-                external_axis_prefix,
-                " ",
-                "arm_prefix:=",
-                arm_prefix,
             ]
         ),
         value_type=str,
     )
-
     robot_description = {"robot_description": robot_description_content}
 
     # MoveIt configuration
     flexiv_srdf_xacro = PathJoinSubstitution(
-        [FindPackageShare("flexiv_moveit_config"), "srdf", "aico1.srdf.xacro"]
+        [FindPackageShare("flexiv_moveit_config"), "srdf", "flexiv.srdf.xacro"]
     )
 
     robot_description_semantic_content = ParameterValue(
@@ -151,22 +129,14 @@ def launch_setup(context):
                 "robot_sn:=",
                 robot_sn,
                 " ",
+                "robot_type:=",
+                robot_type,
+                " ",
                 "load_gripper:=",
                 load_gripper,
                 " ",
                 "load_mounted_ft_sensor:=",
                 load_mounted_ft_sensor,
-                " ",
-                "external_axis_type:=",
-                PythonExpression(
-                    ["'", external_axis_type, "'.lower().replace('-', '_')"]
-                ),
-                " ",
-                "external_axis_prefix:=",
-                external_axis_prefix,
-                " ",
-                "arm_prefix:=",
-                arm_prefix,
             ]
         ),
         value_type=str,
@@ -177,14 +147,10 @@ def launch_setup(context):
 
     publish_robot_description_semantic = {"publish_robot_description_semantic": True}
 
-    # Trajectory Execution Configuration
-    replacements = {
-        "$(var prefix)": prefix_str,
-        "$(var external_axis_prefix)": external_axis_prefix_str,
-    }
+    replacements = {"$(var robot_sn)": robot_sn_str}
 
     robot_description_kinematics_yaml = load_yaml(
-        "flexiv_moveit_config", "config/aico/aico1_kinematics.yaml", replacements
+        "flexiv_moveit_config", "config/kinematics.yaml", replacements
     )
     robot_description_kinematics = {
         "robot_description_kinematics": robot_description_kinematics_yaml
@@ -209,18 +175,13 @@ def launch_setup(context):
         }
     }
     ompl_planning_yaml = load_yaml(
-        "flexiv_moveit_config", "config/aico/aico1_ompl_planning.yaml", replacements
+        "flexiv_moveit_config", "config/ompl_planning.yaml", replacements
     )
     ompl_planning_pipeline_config["move_group"].update(ompl_planning_yaml)
 
-    controllers_file = "config/aico/aico1_4_v1_moveit_controllers.yaml"
-    if external_axis_type_str == "AICO1-4-V2":
-        controllers_file = "config/aico/aico1_4_v2_moveit_controllers.yaml"
-
+    # Trajectory Execution Configuration
     moveit_simple_controllers_yaml = load_yaml(
-        "flexiv_moveit_config",
-        controllers_file,
-        replacements,
+        "flexiv_moveit_config", "config/moveit_controllers.yaml", replacements
     )
 
     moveit_controllers = {
@@ -242,35 +203,15 @@ def launch_setup(context):
         "publish_transforms_updates": True,
     }
 
-    # Load joint limits
-    joint_limits = load_yaml(
-        "flexiv_moveit_config",
-        "config/joint_limits.yaml",
-        {"$(var robot_sn)": prefix_str.rstrip("_")},
-    )
-
-    # Load external axis joint limits
-    external_axis_joint_limits = load_yaml(
-        "flexiv_moveit_config",
-        "config/aico/aico_joint_limits.yaml",
-        {"$(var external_axis_prefix)": external_axis_prefix_str},
-    )
-
-    joint_limits_yaml = {"robot_description_planning": {"joint_limits": {}}}
-
-    if joint_limits and "joint_limits" in joint_limits:
-        joint_limits_yaml["robot_description_planning"]["joint_limits"].update(
-            joint_limits["joint_limits"]
+    joint_limits_yaml = {
+        "robot_description_planning": load_yaml(
+            "flexiv_moveit_config", "config/joint_limits.yaml", replacements
         )
-
-    if external_axis_joint_limits and "joint_limits" in external_axis_joint_limits:
-        joint_limits_yaml["robot_description_planning"]["joint_limits"].update(
-            external_axis_joint_limits["joint_limits"]
-        )
+    }
 
     warehouse_ros_config = {
         "warehouse_plugin": "warehouse_ros_sqlite::DatabaseConnection",
-        "warehouse_host": LaunchConfiguration("warehouse_sqlite_path"),
+        "warehouse_host": warehouse_sqlite_path,
     }
 
     # Start the actual move_group node/action server
@@ -324,11 +265,8 @@ def launch_setup(context):
     )
 
     # Robot controllers
-    ros2_controllers_file = "aico1_4_v1_controllers.yaml"
-    if external_axis_type_str == "AICO1-4-V2":
-        ros2_controllers_file = "aico1_4_v2_controllers.yaml"
     robot_controllers = PathJoinSubstitution(
-        [FindPackageShare("flexiv_bringup"), "config", ros2_controllers_file]
+        [FindPackageShare("flexiv_bringup"), "config", "flexiv_controllers.yaml"]
     )
 
     # Run controller manager
@@ -341,7 +279,7 @@ def launch_setup(context):
             {"robot_sn": robot_sn},
             {"rdk_control_mode": rdk_control_mode},
         ],
-        remappings=[("joint_states", "flexiv_rizon_arm/joint_states")],
+        remappings=[("joint_states", "flexiv_arm/joint_states")],
         output="both",
     )
 
@@ -353,7 +291,7 @@ def launch_setup(context):
         parameters=[
             {
                 "source_list": [
-                    "flexiv_rizon_arm/joint_states",
+                    "flexiv_arm/joint_states",
                     "flexiv_gripper_node/gripper_joint_states",
                 ],
                 "rate": 30,
@@ -362,11 +300,11 @@ def launch_setup(context):
     )
 
     # Run robot controller
-    rizon_arm_controller_spawner = Node(
+    robot_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
         arguments=[
-            robot_controller,
+            "flexiv_arm_controller",
             "--controller-manager",
             "/controller_manager",
         ],
@@ -388,9 +326,11 @@ def launch_setup(context):
         package="controller_manager",
         executable="spawner",
         arguments=["flexiv_robot_states_broadcaster"],
+        parameters=[{"robot_sn": robot_sn}],
         condition=UnlessCondition(use_fake_hardware),
     )
 
+    # Include gripper launch file
     load_gripper_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
@@ -406,6 +346,7 @@ def launch_setup(context):
             "gripper_name": gripper_name,
             "use_fake_hardware": use_fake_hardware,
             "use_lite_rdk": "true",
+            "rdk_install_prefix": LaunchConfiguration("rdk_install_prefix"),
         }.items(),
         condition=IfCondition(load_gripper),
     )
@@ -419,35 +360,53 @@ def launch_setup(context):
         condition=IfCondition(gripper_ready_gate_condition),
     )
 
-    def launch_controller_after_gripper_ready(event, context):
+    def launch_robot_controller_after_gripper_ready(event, context):
         if event.returncode == 0:
-            return [rizon_arm_controller_spawner]
+            return [robot_controller_spawner]
         return [
             EmitEvent(event=Shutdown(reason="flexiv_gripper_node did not report ready"))
         ]
+
+    # Servo node for realtime control
+    servo_yaml = load_yaml(
+        "flexiv_moveit_config",
+        "config/moveit_servo_config.yaml",
+        replacements,
+    )
+    servo_params = {"moveit_servo": servo_yaml}
+    servo_node = Node(
+        package="moveit_servo",
+        condition=IfCondition(start_servo),
+        executable="servo_node_main",
+        parameters=[
+            servo_params,
+            robot_description,
+            robot_description_semantic,
+            robot_description_kinematics,
+        ],
+        output="screen",
+    )
 
     # Run gpio controller
     gpio_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=[
-            "gpio_controller",
-            "--controller-manager",
-            "/controller_manager",
-        ],
+        arguments=["gpio_controller", "--controller-manager", "/controller_manager"],
+        parameters=[{"robot_sn": robot_sn}],
         condition=UnlessCondition(use_fake_hardware),
     )
 
-    # Delay start of controllers after `joint_state_broadcaster`
-    delay_controller_after_jsb = RegisterEventHandler(
-        event_handler=OnProcessExit(
-            target_action=joint_state_broadcaster_spawner,
-            on_exit=[rizon_arm_controller_spawner],
-        ),
-        condition=UnlessCondition(gripper_ready_gate_condition),
+    # Delay start of robot_controller after `joint_state_broadcaster`
+    delay_robot_controller_spawner_after_joint_state_broadcaster_spawner = (
+        RegisterEventHandler(
+            event_handler=OnProcessExit(
+                target_action=joint_state_broadcaster_spawner,
+                on_exit=[robot_controller_spawner],
+            ),
+            condition=UnlessCondition(gripper_ready_gate_condition),
+        )
     )
 
-    # Start gripper only after ros2_control has activated and the joint state broadcaster is up.
     delay_gripper_launch_after_joint_state_broadcaster_spawner = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=joint_state_broadcaster_spawner,
@@ -456,56 +415,69 @@ def launch_setup(context):
         condition=IfCondition(gripper_ready_gate_condition),
     )
 
-    delay_controller_after_gripper_ready = RegisterEventHandler(
+    delay_robot_controller_spawner_after_gripper_ready = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=gripper_ready_waiter,
-            on_exit=launch_controller_after_gripper_ready,
+            on_exit=launch_robot_controller_after_gripper_ready,
         ),
         condition=IfCondition(gripper_ready_gate_condition),
     )
 
-    # Delay rviz start after controller
-    delay_rviz_after_controller = RegisterEventHandler(
+    # Delay move_group start after `robot_controller_spawner`
+    delay_move_group_after_robot_controller_spawner = RegisterEventHandler(
         event_handler=OnProcessExit(
-            target_action=rizon_arm_controller_spawner,
+            target_action=robot_controller_spawner,
+            on_exit=[move_group_node],
+        )
+    )
+
+    # Delay rviz start after `robot_controller_spawner`
+    delay_rviz_after_robot_controller_spawner = RegisterEventHandler(
+        event_handler=OnProcessExit(
+            target_action=robot_controller_spawner,
             on_exit=[rviz_node],
         )
     )
 
     nodes = [
-        move_group_node,
-        robot_state_publisher_node,
         ros2_control_node,
         joint_state_publisher_node,
+        robot_state_publisher_node,
         gripper_ready_waiter,
         joint_state_broadcaster_spawner,
         flexiv_robot_states_broadcaster_spawner,
         gpio_controller_spawner,
+        servo_node,
         delay_gripper_launch_after_joint_state_broadcaster_spawner,
-        delay_controller_after_jsb,
-        delay_controller_after_gripper_ready,
-        delay_rviz_after_controller,
+        delay_robot_controller_spawner_after_joint_state_broadcaster_spawner,
+        delay_robot_controller_spawner_after_gripper_ready,
+        delay_move_group_after_robot_controller_spawner,
+        delay_rviz_after_robot_controller_spawner,
     ]
 
     return nodes
 
 
 def generate_launch_description():
+    # Declare command-line arguments
     declared_arguments = []
+    single_arm_robot_types = [
+        "EnlightL",
+    ]
 
     declared_arguments.append(
         DeclareLaunchArgument(
-            "rizon_type",
-            description="Type of the Flexiv Rizon robot.",
-            default_value="Rizon4",
-            choices=["Rizon4", "Rizon4s"],
+            "robot_type",
+            description="Type of the Flexiv single-arm robot.",
+            default_value="EnlightL",
+            choices=single_arm_robot_types,
         )
     )
 
     declared_arguments.append(
         DeclareLaunchArgument(
             "robot_sn",
-            description="Serial number of the robot to connect to. Remove any space, for example: Rizon4s-123456",
+            description="Serial number of the robot to connect to. Remove any space, for example: EnlightL-123456",
         )
     )
 
@@ -546,7 +518,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "load_mounted_ft_sensor",
             default_value="false",
-            description="Flag to load the mounted force torque sensor. Only available for Rizon4, Rizon4R and Rizon10.",
+            description="Flag to load the mounted force torque sensor.",
         )
     )
 
@@ -569,45 +541,45 @@ def generate_launch_description():
 
     declared_arguments.append(
         DeclareLaunchArgument(
-            "robot_controller",
-            default_value="rizon_arm_controller",
-            description="Robot controller to start. Available: rizon_arm_controller",
-        )
-    )
-
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "external_axis_type",
-            default_value="AICO1-4-V1",
-            description="Type of the AICO1 platform.",
-            choices=["AICO1-4-V1", "AICO1-4-V2"],
-        )
-    )
-
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "external_axis_prefix",
-            default_value="",
-            description="Prefix for the external axis links and joints.",
-        )
-    )
-
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "arm_prefix",
-            default_value="",
-            description="Prefix for the arm links and joints.",
-        )
-    )
-
-    declared_arguments.append(
-        DeclareLaunchArgument(
             "warehouse_sqlite_path",
             default_value=os.path.expanduser("~/.ros/warehouse_ros.sqlite"),
-            description="Path to the warehouse database",
+            description="Path to the sqlite database used by the warehouse_ros package.",
         )
+    )
+
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "start_servo",
+            default_value="false",
+            description="Start the MoveIt servo node?",
+        )
+    )
+
+    rdk_install_prefix = LaunchConfiguration("rdk_install_prefix")
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "rdk_install_prefix",
+            default_value=os.path.expanduser("~/rdk_install"),
+            description="Prefix where flexiv_rdk and its shared-library dependencies are installed.",
+        )
+    )
+
+    set_rdk_ld_library_path = SetEnvironmentVariable(
+        name="LD_LIBRARY_PATH",
+        value=[
+            PathJoinSubstitution([rdk_install_prefix, "lib"]),
+            PythonExpression(
+                [
+                    "':' if '",
+                    EnvironmentVariable("LD_LIBRARY_PATH", default_value=""),
+                    "' else ''",
+                ]
+            ),
+            EnvironmentVariable("LD_LIBRARY_PATH", default_value=""),
+        ],
     )
 
     return LaunchDescription(
-        declared_arguments + [OpaqueFunction(function=launch_setup)]
+        declared_arguments
+        + [set_rdk_ld_library_path, OpaqueFunction(function=launch_setup)]
     )
