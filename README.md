@@ -22,16 +22,19 @@ For ROS 2 users to easily work with [RDK](https://github.com/flexivrobotics/flex
 | **Branch**         | [humble](https://github.com/flexivrobotics/flexiv_ros2/tree/humble) | [jazzy](https://github.com/flexivrobotics/flexiv_ros2/tree/jazzy) |
 | **Release Status** | [![Humble Binary Build](https://github.com/flexivrobotics/flexiv_ros2/actions/workflows/humble-binary-build.yml/badge.svg?branch=humble)](https://github.com/flexivrobotics/flexiv_ros2/actions/workflows/humble-binary-build.yml) | [![Jazzy Binary Build](https://github.com/flexivrobotics/flexiv_ros2/actions/workflows/jazzy-binary-build.yml/badge.svg?branch=jazzy)](https://github.com/flexivrobotics/flexiv_ros2/actions/workflows/jazzy-binary-build.yml) |
 
+> [!NOTE]
+> **Release lines.** Two parallel version lines are maintained per ROS 2 distribution:
+>
+> | Line   | Branch                                                                    | RDK      | Supported robots                                        |
+> | ------ | ------------------------------------------------------------------------- | -------- | ------------------------------------------------------- |
+> | **v2** | [jazzy](https://github.com/flexivrobotics/flexiv_ros2/tree/jazzy)       | RDK v2.x | Enlight-L, Enlight-LL, MICO-Core, MICO-Plus, MICO-Ultra |
+> | **v1** | [jazzy-v1](https://github.com/flexivrobotics/flexiv_ros2/tree/jazzy-v1) | RDK v1.x | Rizon 4/4s/4M/4R/10/10s, AICO1/2 |
+>
+> The default `humble`/`jazzy` branches track the current **v2** line. For Rizon support on RDK v1.x, use the `humble-v1`/`jazzy-v1` branches. The two lines use incompatible RDK APIs and are not interchangeable.
+
 ## Getting Started
 
 This project was developed for ROS 2 Humble (Ubuntu 22.04) and Jazzy (Ubuntu 24.04). Other versions of Ubuntu and ROS 2 may work, but are not officially supported.
-
-This project uses CycloneDDS middleware (`rmw_cyclonedds_cpp`) for ROS 2 communication.
-
-> [!WARNING]
-> Fast DDS middleware (`rmw_fastrtps_cpp`) is not supported in this project.
-> It causes a compilation conflict with `flexiv_rdk` (conflicting DDS/CMake targets).
-> This guide uses CycloneDDS (`rmw_cyclonedds_cpp`) in all setup and runtime examples.
 
 1. Install [ROS 2 Jazzy via Debian Packages](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debians.html)
 
@@ -53,8 +56,7 @@ This project uses CycloneDDS middleware (`rmw_cyclonedds_cpp`) for ROS 2 communi
    ros-jazzy-joint-state-publisher \
    ros-jazzy-joint-state-publisher-gui \
    ros-jazzy-robot-state-publisher \
-   ros-jazzy-rviz2 \
-   ros-jazzy-rmw-cyclonedds-cpp
+   ros-jazzy-rviz2
    ```
 
 3. Setup workspace:
@@ -96,7 +98,6 @@ This project uses CycloneDDS middleware (`rmw_cyclonedds_cpp`) for ROS 2 communi
    ```bash
    cd ~/flexiv_ros2_ws
    source /opt/ros/jazzy/setup.bash
-   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
    colcon build --symlink-install --cmake-args -DCMAKE_PREFIX_PATH=~/rdk_install
    source install/setup.bash
    ```
@@ -106,7 +107,6 @@ This project uses CycloneDDS middleware (`rmw_cyclonedds_cpp`) for ROS 2 communi
 >
 > ```bash
 > source /opt/ros/jazzy/setup.bash
-> export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 > source ~/flexiv_ros2_ws/install/setup.bash
 > ```
 
@@ -117,18 +117,12 @@ This project uses CycloneDDS middleware (`rmw_cyclonedds_cpp`) for ROS 2 communi
 
 The prerequisites of using ROS 2 with Flexiv robots are [enable RDK on the robot server](https://www.flexiv.com/software/rdk/manual/activate_rdk_server.html) and [establish connection](https://www.flexiv.com/software/rdk/manual/establish_connection.html) between the workstation PC and the robot.
 
-Before running any `ros2 launch` command below, make sure CycloneDDS is selected:
-
-```bash
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-```
-
 All provided launch files prepend `${rdk_install_prefix}/lib` to `LD_LIBRARY_PATH` before starting Flexiv-backed nodes. The default launch argument assumes `flexiv_rdk` was installed to `~/rdk_install`, matching the build steps above. If you installed `flexiv_rdk` to a different prefix, pass `rdk_install_prefix:=/path/to/prefix` to the launch command.
 
 The launch file to start the single-arm robot driver is `flexiv.launch.py` - it loads and starts the robot hardware, joint states broadcaster, Flexiv robot states broadcasters, and robot controller and opens RViZ. The arguments for the launch file are as follows:
 
-- `robot_sn` (*required*) - Serial number of the robot to connect to. Remove any space, for example: EnlightL-123456
-- `robot_type` (default: *EnlightL*) - type of the Flexiv single-arm robot. Supported values: *EnlightL*
+- `robot_sn` (*required*) - Serial number of the robot to connect to. Remove any space, for example: Enlight-L-123456
+- `robot_type` (default: *Enlight-L*) - type of the Flexiv robot. Supported values: *Enlight-L* (single-arm), *Enlight-LL*, *MICO-Core*, *MICO-Plus*, *MICO-Ultra* (dual-arm). Dual-arm models share one RDK connection (one `robot_sn`) and expose `left_`/`right_` prefixed joints. **Note:** *MICO-Ultra*'s mobile base is not yet supported in `ros2_control` — its arms (and pan-tilt torso) are controllable, but the mobile base is not driven by this stack.
 - `rdk_control_mode` (default: *joint_position*) - Flexiv RDK control mode for ROS 2 joint position and velocity interfaces. Options: *joint_position* or *joint_impedance*
 - `load_gripper` (default: *false*) - loads the Flexiv Grav gripper as the end-effector of the robot and the gripper control node.
 - `use_fake_hardware` (default: *false*) - starts `FakeSystem` instead of real hardware. This is a simple simulation that mimics joint command to their states.
@@ -143,13 +137,13 @@ The launch file to start the single-arm robot driver is `flexiv.launch.py` - it 
    - Test with real robot:
 
       ```bash
-      ros2 launch flexiv_bringup flexiv.launch.py robot_sn:=[robot_sn] robot_type:=EnlightL
+      ros2 launch flexiv_bringup flexiv.launch.py robot_sn:=[robot_sn] robot_type:=Enlight-L
       ```
 
    - Test with fake hardware (`ros2_control` capability):
 
       ```bash
-      ros2 launch flexiv_bringup flexiv.launch.py robot_sn:=EnlightL-123456 use_fake_hardware:=true
+      ros2 launch flexiv_bringup flexiv.launch.py robot_sn:=Enlight-L-123456 use_fake_hardware:=true
       ```
 
 > [!TIP]
@@ -176,7 +170,7 @@ ros2 launch flexiv_bringup flexiv_moveit.launch.py robot_sn:=[robot_sn]
 Test with fake hardware:
 
 ```bash
-ros2 launch flexiv_bringup flexiv_moveit.launch.py robot_sn:=EnlightL-123456 use_fake_hardware:=true
+ros2 launch flexiv_bringup flexiv_moveit.launch.py robot_sn:=Enlight-L-123456 use_fake_hardware:=true
 ```
 
 ### Robot States
@@ -194,16 +188,16 @@ The robot driver (`flexiv.launch.py`) publishes the following feedback states to
 
 The aggregated `/${robot_sn}/flexiv_robot_states` message also includes the unfiltered wrench fields `raw_tcp_wrench_local` and `raw_tcp_wrench`, which are not published as separate topics.
 
-For single-arm launch files, `robot_type` is the model selector.
+For dual-arm models (*Enlight-LL*, *MICO-Core*, *MICO-Plus*, *MICO-Ultra*) two robot-states broadcasters run, publishing per-arm states under `left_`/`right_`-prefixed names, e.g. `/left_${robot_sn}/flexiv_robot_states` and `/right_${robot_sn}/flexiv_robot_states` (and the corresponding `tcp_pose`, `tcp_twist`, wrench topics). `/joint_states` contains all 14 arm joints with `left_`/`right_` prefixes (plus the `${robot_sn}_torso_joint1/2` joints on *MICO-Plus*/*MICO-Ultra*).
 
 ### GPIO
 
-All digital inputs can be accessed via the ROS topic `/{robot_sn}/gpio_inputs`, which publishes the current state of all 24 digital input ports exposed through the Flexiv control interface *(True: port high, false: port low)*.
+All digital inputs can be accessed via the ROS topic `/{robot_sn}/gpio_inputs`, which publishes the current state of all 20 digital input ports (16 on the control box plus 2 in each wrist connector) exposed through the Flexiv control interface *(True: port high, false: port low)*.
 
 The digital output ports on the control box can be set by publishing to the topic `/{robot_sn}/gpio_outputs`. For example:
 
 ```bash
-ros2 topic pub /EnlightL_123456/gpio_outputs flexiv_msgs/msg/GPIOStates "{states: [{pin: 0, state: true}, {pin: 2, state: true}]}"
+ros2 topic pub /Enlight_L_123456/gpio_outputs flexiv_msgs/msg/GPIOStates "{states: [{pin: 0, state: true}, {pin: 2, state: true}]}"
 ```
 
 ### Gripper Control
