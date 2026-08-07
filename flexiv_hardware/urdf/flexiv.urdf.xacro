@@ -53,7 +53,13 @@
 
     <!-- ===================== SINGLE ARM (Enlight-L) ===================== -->
     <xacro:if value="${is_single}">
-      <xacro:compute_arm_prefix arm_prefix="$(arg arm_prefix)" robot_sn="$(arg robot_sn)" />
+      <!--
+        `use_sn_prefix` must match what the description used, or the joints named
+        here would not be the joints in the model. Both args are declared by the
+        description entry point included above.
+      -->
+      <xacro:compute_arm_prefix arm_prefix="$(arg arm_prefix)" robot_sn="$(arg robot_sn)"
+        use_sn_prefix="$(arg use_sn_prefix)" />
       <xacro:property name="prefix" value="${computed_arm_prefix}" lazy_eval="false" />
       <xacro:property name="init_file"
         value="${'$(arg initial_positions_file)' if '$(arg initial_positions_file)' != '' else arm_init}" />
