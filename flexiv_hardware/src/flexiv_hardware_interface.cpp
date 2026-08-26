@@ -25,6 +25,7 @@
 
 #include "flexiv/rdk/robot.hpp"
 #include "flexiv_hardware/flexiv_hardware_interface.hpp"
+#include "flexiv_hardware/rdk_compat.hpp"
 #include "flexiv_hardware/flexiv_robot_states_handle.hpp"
 
 namespace {
@@ -57,7 +58,7 @@ std::string get_optional_hardware_parameter(
 
 std::string joint_group_name_string(flexiv::rdk::JointGroup group)
 {
-    const auto& group_names = flexiv::rdk::JointGroupNames();
+    const auto& group_names = flexiv_hardware::compat::JointGroupNames();
     const auto name_it = group_names.find(group);
     if (name_it != group_names.end()) {
         return name_it->second;
