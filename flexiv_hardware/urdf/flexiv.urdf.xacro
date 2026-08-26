@@ -74,11 +74,19 @@
         num_gpio_ports="${num_gpio_ports}" />
     </xacro:if>
 
-    <!-- ============ ONE ROBOT WITH TWO ARMS (Enlight-LL, MICO) ============ -->
+    <!--
+      ============ ONE ROBOT WITH TWO ARMS (Enlight-LL, MICO) ============
+      `use_sn_prefix` is hardcoded off, same as the model side
+      (`flexiv_description`'s `flexiv.urdf.xacro`): every one of these robots
+      shares one `robot_sn` across both arms, so `left`/`right` alone already
+      disambiguate their joints and states, and the `ros2_control` block here
+      must agree with the model's joint names or the controller can never
+      claim its interfaces.
+    -->
     <xacro:if value="${is_enlight_ll or is_mico_core or is_mico_torso}">
-      <xacro:compute_arm_prefix arm_prefix="left" robot_sn="$(arg robot_sn)" />
+      <xacro:compute_arm_prefix arm_prefix="left" robot_sn="$(arg robot_sn)" use_sn_prefix="false" />
       <xacro:property name="prefix_left" value="${computed_arm_prefix}" lazy_eval="false" />
-      <xacro:compute_arm_prefix arm_prefix="right" robot_sn="$(arg robot_sn)" />
+      <xacro:compute_arm_prefix arm_prefix="right" robot_sn="$(arg robot_sn)" use_sn_prefix="false" />
       <xacro:property name="prefix_right" value="${computed_arm_prefix}" lazy_eval="false" />
 
       <!-- Enlight-LL mirrors nothing; the MICO arms face each other. -->

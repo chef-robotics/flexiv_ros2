@@ -19,21 +19,24 @@ controller_manager:
 
 flexiv_arm_controller:
   ros__parameters:
+    # Both arms share one `robot_sn`, so `left`/`right` alone already
+    # disambiguate joints — must match `use_sn_prefix="false"` in the
+    # Enlight-LL branch of `flexiv_description`'s `flexiv.urdf.xacro`.
     joints:
-      - left_$(var robot_sn)_joint1
-      - left_$(var robot_sn)_joint2
-      - left_$(var robot_sn)_joint3
-      - left_$(var robot_sn)_joint4
-      - left_$(var robot_sn)_joint5
-      - left_$(var robot_sn)_joint6
-      - left_$(var robot_sn)_joint7
-      - right_$(var robot_sn)_joint1
-      - right_$(var robot_sn)_joint2
-      - right_$(var robot_sn)_joint3
-      - right_$(var robot_sn)_joint4
-      - right_$(var robot_sn)_joint5
-      - right_$(var robot_sn)_joint6
-      - right_$(var robot_sn)_joint7
+      - left_joint1
+      - left_joint2
+      - left_joint3
+      - left_joint4
+      - left_joint5
+      - left_joint6
+      - left_joint7
+      - right_joint1
+      - right_joint2
+      - right_joint3
+      - right_joint4
+      - right_joint5
+      - right_joint6
+      - right_joint7
     command_interfaces:
       - position
     state_interfaces:
@@ -50,8 +53,8 @@ flexiv_arm_controller:
 
 left_flexiv_robot_states_broadcaster:
   ros__parameters:
-    robot_sn: left_$(var robot_sn)
+    robot_sn: left
 
 right_flexiv_robot_states_broadcaster:
   ros__parameters:
-    robot_sn: right_$(var robot_sn)
+    robot_sn: right
