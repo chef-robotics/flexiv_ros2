@@ -45,6 +45,20 @@ inline const std::map<flexiv::rdk::JointGroup, std::string>& JointGroupNames()
 #endif
 }
 
+// The operational-status-to-name map of the installed RDK.
+//
+// v2.1 exposes the inline `kOpStatusNames` map; v2.2 replaced it with an
+// `OperationalStatusNames()` accessor -- a different name as well as a different
+// shape, so this cannot share the `JointGroupNames` branch.
+inline const std::map<flexiv::rdk::OperationalStatus, std::string>& OpStatusNames()
+{
+#ifdef FLEXIV_RDK_AT_LEAST_2_2
+    return flexiv::rdk::OperationalStatusNames();
+#else
+    return flexiv::rdk::kOpStatusNames;
+#endif
+}
+
 } /* namespace compat */
 } /* namespace flexiv_hardware */
 
