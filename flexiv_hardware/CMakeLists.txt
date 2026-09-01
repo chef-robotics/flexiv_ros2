@@ -25,9 +25,12 @@ add_library(
   src/flexiv_hardware_interface.cpp
 )
 
+# TODO: Revert to PRIVATE once the RDK pin returns to v2.2 and
+# `rdk_compat.hpp` is deleted. PUBLIC exists only so `flexiv_gripper` can
+# include that header; nothing else here is part of this package's interface.
 target_include_directories(
   ${PROJECT_NAME}
-  PRIVATE
+  PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
