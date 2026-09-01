@@ -20,6 +20,13 @@
   <xacro:arg name="use_fake_hardware" default="false" />
   <xacro:arg name="fake_sensor_commands" default="false" />
   <xacro:arg name="initial_positions_file" default="" />
+  <!--
+    Per-arm overrides for the dual-arm branch, which cannot use the single-arm
+    `initial_positions_file` above: that names one file and a dual robot needs
+    two. Empty means "keep the vendor default for that arm".
+  -->
+  <xacro:arg name="initial_positions_file_left" default="" />
+  <xacro:arg name="initial_positions_file_right" default="" />
 
   <!-- Robot model, including the arg declarations this file relies on
        (robot_sn, arm_prefix). -->
@@ -76,13 +83,20 @@
 
     <!-- ============ ONE ROBOT WITH TWO ARMS (Enlight-LL, MICO) ============ -->
     <xacro:if value="${is_enlight_ll or is_mico_core or is_mico_torso}">
-      <xacro:compute_arm_prefix arm_prefix="left" robot_sn="$(arg robot_sn)" />
+      <xacro:compute_arm_prefix arm_prefix="arm1" robot_sn="$(arg robot_sn)" use_sn_prefix="$(arg use_sn_prefix)" />
       <xacro:property name="prefix_left" value="${computed_arm_prefix}" lazy_eval="false" />
-      <xacro:compute_arm_prefix arm_prefix="right" robot_sn="$(arg robot_sn)" />
+      <xacro:compute_arm_prefix arm_prefix="arm2" robot_sn="$(arg robot_sn)" use_sn_prefix="$(arg use_sn_prefix)" />
       <xacro:property name="prefix_right" value="${computed_arm_prefix}" lazy_eval="false" />
 
       <!-- Enlight-LL mirrors nothing; the MICO arms face each other. -->
-      <xacro:property name="init_right" value="${arm_init if is_enlight_ll else arm_init_mirrored}" />
+      <xacro:property name="init_right_default"
+          value="${arm_init if is_enlight_ll else arm_init_mirrored}" />
+        <xacro:property name="init_left"
+          value="${'$(arg initial_positions_file_left)'
+                   if '$(arg initial_positions_file_left)' != '' else arm_init}" />
+        <xacro:property name="init_right"
+          value="${'$(arg initial_positions_file_right)'
+                   if '$(arg initial_positions_file_right)' != '' else init_right_default}" />
 
       <!-- MICO-Plus and MICO-Ultra add two actuated torso joints. -->
       <xacro:unless value="${is_mico_torso}">
@@ -93,7 +107,7 @@
           rdk_control_mode="$(arg rdk_control_mode)"
           use_fake_hardware="$(arg use_fake_hardware)"
           fake_sensor_commands="$(arg fake_sensor_commands)"
-          initial_positions_file_left="${arm_init}"
+          initial_positions_file_left="${init_left}"
           initial_positions_file_right="${init_right}" />
       </xacro:unless>
 
@@ -105,7 +119,7 @@
           rdk_control_mode="$(arg rdk_control_mode)"
           use_fake_hardware="$(arg use_fake_hardware)"
           fake_sensor_commands="$(arg fake_sensor_commands)"
-          initial_positions_file_left="${arm_init}"
+          initial_positions_file_left="${init_left}"
           initial_positions_file_right="${init_right}"
           torso_initial_positions_file="${cfg}/${rtype}/torso_initial_positions.yaml" />
       </xacro:if>
