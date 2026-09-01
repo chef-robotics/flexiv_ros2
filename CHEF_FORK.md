@@ -47,3 +47,17 @@ git log --oneline chef/humble..origin/release/humble-v2.2  # the real upstream d
 
 Sync from the release branch chef is following, or from a `humble` that has
 caught up — verify by confirming the four files above still exist afterwards.
+
+## RDK version is pinned to the robot's software
+
+`flexiv.humble.repos` pins `flexiv_rdk` to `v2.1`, not upstream's
+`release/v2.2`. The RDK refuses to connect on a version mismatch, and v2.x
+pairs one-to-one with the Enlight-only `v3E.x` robot software line
+(v2.0 with v3E.0, v2.1 with v3E.1). Chef's Enlight-LL runs v3E.1.
+
+Moving that pin means moving the robot's software too; see the comment in
+`flexiv.humble.repos`.
+
+The pin also requires the `rdk_compat.hpp` shim, because v2.2 turned two inline
+lookup maps into accessor functions and the same source cannot name both
+directly. **Merge the shim first** — this change alone will not build.

@@ -6,4 +6,13 @@ repositories:
   flexiv_rdk:
     type: git
     url: https://github.com/flexivrobotics/flexiv_rdk.git
-    version: release/v2.2
+    # Chef pin: v2.1, not upstream's release/v2.2.
+    #
+    # The RDK enforces a strict match against the robot's software version and
+    # refuses to connect otherwise ("Version of this client is incompatible
+    # with robot"). RDK v2.x pairs with the Enlight-only `v3E.x` line -- v2.0
+    # with v3E.0, v2.1 with v3E.1 -- and our Enlight-LL predates v2.2.
+    #
+    # Revisit when the robot's software is upgraded; the pairing is one-to-one,
+    # so the RDK pin and the robot software move together.
+    version: v2.1
