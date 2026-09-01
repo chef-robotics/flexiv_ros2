@@ -58,6 +58,8 @@ std::string get_optional_hardware_parameter(
 
 std::string joint_group_name_string(flexiv::rdk::JointGroup group)
 {
+    // TODO: Revert to `flexiv::rdk::JointGroupNames()` when the RDK pin returns
+    // to v2.2; see `rdk_compat.hpp`.
     const auto& group_names = flexiv_hardware::compat::JointGroupNames();
     const auto name_it = group_names.find(group);
     if (name_it != group_names.end()) {

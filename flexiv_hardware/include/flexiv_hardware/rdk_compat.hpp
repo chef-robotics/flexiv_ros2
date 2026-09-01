@@ -1,5 +1,18 @@
 // Compatibility shims over RDK API differences across supported versions.
 //
+// TODO: Delete this header once the RDK pin returns to v2.2, and change every
+// `flexiv_hardware::compat::` call site back to `flexiv::rdk::`. The shim
+// exists only because chef pins v2.1 to match its robot's `v3E.1` software;
+// it buys nothing once v2.1 is no longer supported. To revert:
+//
+//   1. delete this file
+//   2. `flexiv_hardware::compat::JointGroupNames()` -> `flexiv::rdk::JointGroupNames()`
+//      and `...::OpStatusNames()` -> `flexiv::rdk::OperationalStatusNames()`
+//      (call sites in `flexiv_hardware_interface.cpp` and
+//      `flexiv_gripper/src/gripper_action_server.cpp`)
+//   3. drop the `#include "flexiv_hardware/rdk_compat.hpp"` lines
+//   4. return `flexiv_hardware`'s `target_include_directories` to PRIVATE
+//
 // Chef pins the RDK to the version matching its robot's software (see
 // `flexiv.humble.repos`), and that pin moves as robots are upgraded. Where an
 // API changed shape but not meaning between those versions, the difference is

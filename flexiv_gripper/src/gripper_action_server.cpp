@@ -26,6 +26,8 @@ flexiv::rdk::JointGroup ResolveJointGroup(const std::string& group_name,
             "Parameter 'joint_group' must be specified (e.g. ARM_1 or ARM_2) because the connected "
             "robot reports multiple single-arm groups");
     }
+    // TODO: Revert the `flexiv_hardware::compat::` uses in this file to
+    // `flexiv::rdk::` when the RDK pin returns to v2.2; see `rdk_compat.hpp`.
     for (const auto& [group, name] : flexiv_hardware::compat::JointGroupNames()) {
         if (name == group_name) {
             if (single_arm_groups.count(group) == 0) {
