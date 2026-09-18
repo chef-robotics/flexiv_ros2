@@ -143,6 +143,28 @@ private:
     rclcpp::Clock log_clock_ {RCL_STEADY_TIME};
 
     /**
+     * Consecutive write() cycles whose command stream to the robot threw, reset by the first
+     * cycle that streams successfully. A stream rejected right after a control-mode transition
+     * usually clears within a cycle or two, so write() tolerates a short run of failures rather
+     * than erroring the component -- which would be terminal -- on the first one.
+     */
+    size_t consecutive_stream_failures_ {0};
+
+    /** Consecutive stream failures tolerated before write() errors the hardware component. */
+    static constexpr size_t kMaxConsecutiveStreamFailures = 50;
+
+    /**
+     * Consecutive write() cycles that found the robot out of the required control mode and tried
+     * to switch it back, reset by the first cycle that finds the mode already correct. The robot
+     * can leave the mode faster than it can be put back -- a safety stop does exactly that while
+     * fault() still reads false -- so the retry is bounded rather than left to thrash.
+     */
+    size_t consecutive_mode_recoveries_ {0};
+
+    /** Consecutive mode-recovery attempts before write() gives up and errors the component. */
+    static constexpr size_t kMaxConsecutiveModeRecoveries = 3;
+
+    /**
      * Resolve which joint groups a set of command interface names fully claims, and with which
      * interface type.
      * @param[in] keys Command interface names to resolve.
