@@ -5,16 +5,20 @@ Chef-specific context for this fork. Kept in its own file rather than in
 
 ## Branches
 
-- `chef/humble-v2.1` — upstream `56a7927` plus these notes, nothing else.
-- `chef/humble-v2.1-per-arm` — the above plus upstream's three
-  `feature/independent-per-arm-control-humble` commits, cherry-picked
-  unmodified. This is the branch chef builds.
+`chef/humble-v2.1` is the branch chef builds and the one `ChefAutonomy`'s
+submodule tracks. It is upstream `56a7927` ("Release/Flexiv ROS 2 Humble 2.1")
+plus upstream's three `feature/independent-per-arm-control-humble` commits,
+chef's control-mode-loss handling, and these notes.
 
-## Independent per-arm control is an upstream *experimental* branch
+The branch exists to pin a pairing: this driver release is the one that matches
+RDK v2.1, which is what the Enlight's `v3E.1` software requires. See "Why not
+the consolidated `humble` line".
 
-`chef/humble-v2.1-per-arm` carries `832e6e5`, `a72c44e`, `daad9d1` from
-upstream's `feature/independent-per-arm-control-humble`, which happens to sit
-directly on `56a7927` — so they cherry-pick without modification.
+## Independent per-arm control comes from an upstream *experimental* branch
+
+`832e6e5`, `a72c44e` and `daad9d1` come from upstream's
+`feature/independent-per-arm-control-humble`, which happens to sit directly on
+`56a7927` — so they cherry-pick without modification.
 
 Why chef needs it: the released driver exposes ONE 14-joint
 `flexiv_arm_controller`, and `allow_partial_joints_goal` is not a workaround.
@@ -23,8 +27,8 @@ joints, so commanding one arm actively fights any trajectory the other arm is
 following. The RDK itself supports independent per-arm control; only the driver
 did not.
 
-What the branch changes, in one line: an arm is now claimed as a whole joint
-group, and `write()` evaluates each group's commands independently instead of
+What they change, in one line: an arm is now claimed as a whole joint group,
+and `write()` evaluates each group's commands independently instead of
 suppressing all motion when any joint's command is NaN.
 
 Constraints worth knowing before designing against it:
@@ -35,25 +39,39 @@ Constraints worth knowing before designing against it:
   other is fine, but not position on one and effort on the other. Effort
   requires every group claimed, or the unclaimed arm free-floats.
 - An idle arm is **actively held** at its last position, not left uncommanded.
-- `write()` now returns `ERROR` (rather than silently skipping) on mode
-  mismatch, stream exceptions and GPIO failures, so the hardware component
-  enters its error state instead of quietly doing nothing.
+  Upstream gates streaming on a group being actively commanded, which computes
+  the hold targets and then discards them; chef removed that gate (see below),
+  so the hold is real here.
 
 Being an experimental branch, expect this to be rebased or replaced upstream;
 re-check it before any future sync.
 
-## Upstream `chef/humble-v2.1` carries no chef changes
+## Chef keeps the component alive across control-mode loss
 
-This branch is upstream `56a7927` ("Release/Flexiv ROS 2 Humble 2.1")
-unmodified, and that is deliberate — do not "fix" the absence of a diff.
+Upstream's `write()` returns `ERROR` on any mode mismatch, stream exception or
+GPIO failure. That is terminal: `ros2_control` deactivates the component and
+`on_error()` drops every claim. The controllers stay `active` over the corpse
+and go on reporting "Goal reached, success!" while the arm does not move —
+observed on the v5.1 duo with both arms >120 deg from the home preset while the
+state machine reported `HOMING:'success'`.
 
-Chef's changes all live in `flexiv_description` on its own `chef/humble-v2.1`
-branch (`armN` prefixes, `use_sn_prefix`, per-arm initial positions). On the
-humble-v2.1 line the `<ros2_control>` block and the dual-arm macro are still in
-`flexiv_description`, so there is nothing here to change.
+So `write()` here streams every cycle whose targets are valid, tries to
+re-enter a lost mode (bounded, since the robot can leave a mode faster than it
+can be put back), and tolerates a bounded run of consecutive stream failures.
+Measured across four hardware runs at 30 bpm: 10/10 picks/places stock,
+54/51 with all three changes.
 
-The branch exists to pin the pairing: this driver release is the one that
-matches RDK v2.1, which is what the Enlight's `v3E.1` software requires.
+This makes the component much harder to kill but does not fix the underlying
+defect — a controller must never report success when its hardware is
+unavailable. Humble's `controller_manager` does not deactivate controllers when
+a component errors, so that needs a chef-side watchdog or an upstream change.
+
+## The description changes live in `flexiv_description`
+
+`armN` prefixes, `use_sn_prefix` and per-arm initial positions are all in
+`flexiv_description` on its own `chef/humble-v2.1` branch, not here. On the
+humble-v2.1 line the `<ros2_control>` block and the dual-arm macro are still
+that repo's, so there is nothing here to carry them.
 
 ## Why not the consolidated `humble` line
 
