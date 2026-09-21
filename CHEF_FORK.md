@@ -7,8 +7,8 @@ Chef-specific context for this fork. Kept in its own file rather than in
 
 `chef/humble-v2.1` is the branch chef builds and the one `ChefAutonomy`'s
 submodule tracks. It is upstream `56a7927` ("Release/Flexiv ROS 2 Humble 2.1")
-plus upstream's three `feature/independent-per-arm-control-humble` commits, and
-these notes.
+plus upstream's three `feature/independent-per-arm-control-humble` commits,
+chef's control-mode-loss handling, and these notes.
 
 The branch exists to pin a pairing: this driver release is the one that matches
 RDK v2.1, which is what the Enlight's `v3E.1` software requires. See "Why not
@@ -44,15 +44,33 @@ Constraints worth knowing before designing against it:
 - The RDK control mode is **global**: position on one arm and velocity on the
   other is fine, but not position on one and effort on the other. Effort
   requires every group claimed, or the unclaimed arm free-floats.
-- Streaming is gated on a group being actively commanded, so between
-  trajectories the hold targets are computed and then discarded, leaving the
-  robot uncommanded.
-- `write()` returns `ERROR` on mode mismatch, stream exceptions and GPIO
-  failures, which is terminal: `ros2_control` deactivates the component and
-  `on_error()` drops every claim.
+- An idle arm is **actively held** at its last position, not left uncommanded.
+  Upstream gates streaming on a group being actively commanded, which computes
+  the hold targets and then discards them; chef removed that gate, so the hold
+  is real here. See "Chef keeps the component alive across control-mode loss".
 
 Being an experimental branch, expect this to be rebased or replaced upstream;
 re-check it before any future sync.
+
+## Chef keeps the component alive across control-mode loss
+
+Upstream's `write()` returns `ERROR` on any mode mismatch, stream exception or
+GPIO failure. That is terminal: `ros2_control` deactivates the component and
+`on_error()` drops every claim. The controllers stay `active` over the corpse
+and go on reporting "Goal reached, success!" while the arm does not move —
+seen in on-hardware testing with both arms >120 deg from their commanded pose
+while the stack reported success.
+
+So `write()` here streams every cycle whose targets are valid, tries to
+re-enter a lost mode (bounded, since the robot can leave a mode faster than it
+can be put back), and tolerates a bounded run of consecutive stream failures.
+Measured on a dual-arm cell across four runs, cycles completed per run: 10
+stock, 54 with all three changes.
+
+This makes the component much harder to kill but does not fix the underlying
+defect — a controller must never report success when its hardware is
+unavailable. Humble's `controller_manager` does not deactivate controllers when
+a component errors, so that needs a chef-side watchdog or an upstream change.
 
 ## Why not the consolidated `humble` line
 

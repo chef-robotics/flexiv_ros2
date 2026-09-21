@@ -874,10 +874,41 @@ hardware_interface::return_type FlexivHardwareInterface::write(
 {
     const auto required_mode = required_rdk_mode();
     if (required_mode != flexiv::rdk::Mode::UNKNOWN && robot_->mode() != required_mode) {
+        // Re-enter a mode that merely lapsed, rather than returning ERROR: ros2_control
+        // deactivates the component on ERROR and on_error() drops every claim, which the
+        // controllers above do not observe.
+        //
+        // Bounded because the robot can leave the mode faster than it can be put back -- a CAT2
+        // safety stop does so every cycle while fault() still reads false.
+        if (robot_->operational() && !robot_->fault()
+            && ++consecutive_mode_recoveries_ <= kMaxConsecutiveModeRecoveries) {
+            try {
+                RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
+                    "Robot left the expected RDK control mode; re-entering it");
+                robot_->SwitchMode(required_mode);
+                // SwitchMode() stops the robot; invalidate the held targets so the seeding
+                // below re-reads the measured position.
+                std::fill(target_pos_buffer_.begin(), target_pos_buffer_.end(),
+                    std::numeric_limits<double>::quiet_NaN());
+            } catch (const std::exception& e) {
+                RCLCPP_ERROR_THROTTLE(getLogger(), log_clock_, 1000,
+                    "Failed to re-enter the expected RDK control mode: %s", e.what());
+                return hardware_interface::return_type::ERROR;
+            }
+
+            // SwitchMode() returning, and mode() reporting the new mode, does not mean the
+            // robot will accept a stream yet; streaming now throws. Nothing was reaching the
+            // robot this cycle anyway.
+            return hardware_interface::return_type::OK;
+        }
+
         RCLCPP_ERROR_THROTTLE(getLogger(), log_clock_, 1000,
-            "Robot is no longer in the expected RDK control mode, skipping joint commands");
+            "Robot is no longer in the expected RDK control mode and could not be recovered "
+            "(operational=%d, fault=%d, recovery attempts=%zu), skipping joint commands",
+            (int)robot_->operational(), (int)robot_->fault(), consecutive_mode_recoveries_);
         return hardware_interface::return_type::ERROR;
     }
+    consecutive_mode_recoveries_ = 0;
 
     const bool torque_control = required_mode == flexiv::rdk::Mode::RT_JOINT_TORQUE;
 
@@ -885,7 +916,6 @@ hardware_interface::return_type FlexivHardwareInterface::write(
     auto& target_vel = target_vel_buffer_;
     auto& target_torque = target_torque_buffer_;
 
-    size_t commanded_groups = 0;
     bool targets_valid = true;
     size_t offset = 0;
     for (size_t g = 0; required_mode != flexiv::rdk::Mode::UNKNOWN && g < active_groups_.size();
@@ -906,7 +936,6 @@ hardware_interface::return_type FlexivHardwareInterface::write(
             }
             std::copy_n(target_torque.begin() + begin, group_dof,
                 rt_joint_torque_cmds_.at(group).tau_d.begin());
-            commanded_groups++;
             offset += group_dof;
             continue;
         }
@@ -936,7 +965,6 @@ hardware_interface::return_type FlexivHardwareInterface::write(
                     target_vel[offset + k] = hw_commands_joint_velocities_[ros_idx];
                 }
             }
-            commanded_groups++;
         } else {
             for (size_t k = 0; k < group_dof && targets_valid; ++k) {
                 if (!std::isfinite(target_pos[offset + k])) {
@@ -959,8 +987,13 @@ hardware_interface::return_type FlexivHardwareInterface::write(
         offset += group_dof;
     }
 
-    // Stream every joint group in a single call
-    if (commanded_groups > 0 && targets_valid) {
+    // Stream on every cycle with valid targets, including those where every group is merely
+    // holding: the RT modes track "continuous commands @ 1kHz" (rdk/mode.hpp), so a cycle that
+    // streams nothing drops the robot out of the mode rather than leaving it where it is.
+    //
+    // UNKNOWN excepted -- nothing is claimed, so the buffers are stale and
+    // perform_command_mode_switch() is taking the robot to IDLE.
+    if (required_mode != flexiv::rdk::Mode::UNKNOWN && targets_valid) {
         try {
             if (torque_control) {
                 robot_->StreamJointTorque(rt_joint_torque_cmds_);
@@ -968,10 +1001,21 @@ hardware_interface::return_type FlexivHardwareInterface::write(
                 robot_->StreamJointPosition(rt_joint_position_cmds_);
             }
         } catch (const std::exception& e) {
-            RCLCPP_ERROR_THROTTLE(
-                getLogger(), log_clock_, 1000, "Failed to stream joint commands: %s", e.what());
+            // A stream rejected just after a mode transition clears in a cycle or two, and
+            // erroring is terminal (see the mode check above), so tolerate a bounded run.
+            ++consecutive_stream_failures_;
+            if (consecutive_stream_failures_ <= kMaxConsecutiveStreamFailures) {
+                RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
+                    "Failed to stream joint commands (%zu/%zu consecutive): %s",
+                    consecutive_stream_failures_, kMaxConsecutiveStreamFailures, e.what());
+                return hardware_interface::return_type::OK;
+            }
+            RCLCPP_ERROR_THROTTLE(getLogger(), log_clock_, 1000,
+                "Failed to stream joint commands %zu cycles in a row, giving up: %s",
+                consecutive_stream_failures_, e.what());
             return hardware_interface::return_type::ERROR;
         }
+        consecutive_stream_failures_ = 0;
     }
 
     // Write digital output
