@@ -122,6 +122,16 @@ private:
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RtJointPositionCmd> rt_joint_position_cmds_;
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RtJointTorqueCmd> rt_joint_torque_cmds_;
 
+    /** RDK default for RtJointTorqueCmd::friction_comp_scale, in percent. */
+    static constexpr double kDefaultFrictionCompScale = 100.0;
+
+    /**
+     * Friction compensation applied to every joint group's torque command, in percent [0, 100].
+     * From the optional `friction_comp_scale` hardware parameter; kDefaultFrictionCompScale when
+     * absent.
+     */
+    double friction_comp_scale_ {kDefaultFrictionCompScale};
+
     // Robot states exported per active joint group.
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RobotStates> hw_flexiv_robot_states_by_group_;
     std::map<flexiv::rdk::JointGroup, double> hw_flexiv_robot_state_handles_by_group_;

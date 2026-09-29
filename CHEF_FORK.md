@@ -42,6 +42,27 @@ Constraints worth knowing before designing against it:
 Being an experimental branch, expect this to be rebased or replaced upstream;
 re-check it before any future sync.
 
+## `friction_comp_scale` hardware parameter
+
+`FlexivHardwareInterface` reads an optional `friction_comp_scale`
+hardware parameter and writes it into every joint group's
+`RtJointTorqueCmd::friction_comp_scale`,
+the RDK's friction compensation during joint torque streaming, in percent.
+
+- Range `[0, 100]`; anything else, or a non-number,
+  fails `on_init`.
+- Absent means `100`, the RDK default,
+  so vendor behavior is unchanged.
+- The value is logged once at INFO as `friction_comp_scale = <value>`.
+- Only `RT_JOINT_TORQUE` reads it; position and impedance modes are untouched.
+- It is robot-wide rather than per joint group:
+  the interface cannot tell a floating group from a held one.
+
+Chef sets `0` for free drive on the Enlight-LL,
+where friction compensation makes a damped, floating arm drift.
+The `flexiv_description` fork passes the value through as the
+`friction_comp_scale` xacro argument.
+
 ## Upstream `chef/humble-v2.1` carries no chef changes
 
 This branch is upstream `56a7927` ("Release/Flexiv ROS 2 Humble 2.1")

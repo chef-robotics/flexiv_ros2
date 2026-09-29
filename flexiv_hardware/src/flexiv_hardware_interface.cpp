@@ -458,6 +458,31 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
         }
     }
 
+    // Robot-wide: the interface cannot tell a floating joint group from a held one, so one
+    // scale applies to every group's torque command. Absent means the RDK default.
+    const auto friction_comp_scale_str
+        = get_optional_hardware_parameter(info_, "friction_comp_scale");
+    friction_comp_scale_ = kDefaultFrictionCompScale;
+    if (!friction_comp_scale_str.empty()) {
+        size_t parsed_chars = 0;
+        double parsed_scale = std::numeric_limits<double>::quiet_NaN();
+        try {
+            parsed_scale = std::stod(friction_comp_scale_str, &parsed_chars);
+        } catch (const std::exception&) {
+            parsed_chars = 0;
+        }
+        if (parsed_chars != friction_comp_scale_str.size() || !std::isfinite(parsed_scale)
+            || parsed_scale < 0.0 || parsed_scale > 100.0) {
+            RCLCPP_FATAL(getLogger(),
+                "Parameter 'friction_comp_scale' has invalid value '%s'. Expected a number in "
+                "[0, 100]",
+                friction_comp_scale_str.c_str());
+            return hardware_interface::CallbackReturn::ERROR;
+        }
+        friction_comp_scale_ = parsed_scale;
+    }
+    RCLCPP_INFO(getLogger(), "friction_comp_scale = %g", friction_comp_scale_);
+
     try {
         auto rdk_control_mode_str = info_.hardware_parameters.at("rdk_control_mode");
         if (rdk_control_mode_str == "joint_position") {
@@ -687,6 +712,8 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_activate(
             torque_cmd.tau_d.assign(group_dof, 0.0);
             torque_cmd.enable_gravity_comp = true;
             torque_cmd.enable_soft_limits = true;
+            // Only RT_JOINT_TORQUE reads this; position modes are unaffected.
+            torque_cmd.friction_comp_scale = friction_comp_scale_;
         }
 
         // Start from a known state: no joint group claimed, robot idle, every hold target latched.
