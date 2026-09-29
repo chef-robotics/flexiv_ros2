@@ -560,6 +560,18 @@ std::vector<hardware_interface::StateInterface> FlexivHardwareInterface::export_
             gpio_interface_name, "digital_input_" + std::to_string(i), &hw_states_gpio_in_[i]));
     }
 
+    // Health describes the controller box, not a joint group, so it is exported
+    // once rather than per group, under a name carrying no serial number.
+    const std::string health_interface_name = "robot_health";
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        health_interface_name, "operational_status", &hw_states_operational_status_));
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        health_interface_name, "connected", &hw_states_connected_));
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        health_interface_name, "operational", &hw_states_operational_));
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        health_interface_name, "estop_released", &hw_states_estop_released_));
+
     return state_interfaces;
 }
 
@@ -811,6 +823,12 @@ flexiv::rdk::Mode FlexivHardwareInterface::required_rdk_mode() const
 hardware_interface::return_type FlexivHardwareInterface::read(
     const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/)
 {
+    hw_states_operational_status_
+        = static_cast<double>(static_cast<int>(robot_->operational_status()));
+    hw_states_connected_ = static_cast<double>(robot_->connected());
+    hw_states_operational_ = static_cast<double>(robot_->operational());
+    hw_states_estop_released_ = static_cast<double>(robot_->estop_released());
+
     if (!robot_->operational()) {
         return hardware_interface::return_type::OK;
     }
