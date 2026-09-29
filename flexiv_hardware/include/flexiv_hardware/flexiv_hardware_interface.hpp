@@ -130,6 +130,13 @@ private:
     std::vector<double> hw_commands_gpio_out_;
     std::vector<double> hw_states_gpio_in_;
 
+    // Whole-robot health, exported under `robot_health`. A state interface
+    // carries only a double, so the status enum is cast here and back downstream.
+    double hw_states_operational_status_ = 0.0;
+    double hw_states_connected_ = 0.0;
+    double hw_states_operational_ = 0.0;
+    double hw_states_estop_released_ = 0.0;
+
     // Map from RDK joint index to ROS joint index
     // RDK expects: [ext_axis_1, ..., ext_axis_N, arm_joint_1, ..., arm_joint_7]
     std::vector<size_t> rdk_to_ros_map_;
