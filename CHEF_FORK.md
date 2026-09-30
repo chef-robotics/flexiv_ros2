@@ -48,8 +48,11 @@ Constraints worth knowing before designing against it:
   trajectories the hold targets are computed and then discarded, leaving the
   robot uncommanded.
 - `write()` returns `ERROR` on mode mismatch, stream exceptions and GPIO
-  failures, which is terminal: `ros2_control` deactivates the component and
-  `on_error()` drops every claim.
+  failures, which is terminal: `ros2_control` finalizes the component, stops
+  calling `read()` on it, and `on_error()` drops every claim. The controllers
+  stay `active`. While the robot is not operational (e.g. E-stopped) `write()`
+  instead skips its commands and returns `OK`, so `read()` keeps reporting the
+  robot's state; getting it operational again still needs `on_activate()`.
 
 Being an experimental branch, expect this to be rebased or replaced upstream;
 re-check it before any future sync.
