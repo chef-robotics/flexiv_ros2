@@ -164,6 +164,11 @@ private:
      * Mode::UNKNOWN when no joint group is claimed at all. */
     flexiv::rdk::Mode required_rdk_mode() const;
 
+    /** Handle a write() cycle whose commands are skipped because the robot is not operational,
+     * e.g. E-stopped: log it, and drop the hold targets so they re-seed from the measured position
+     * once it is operational again. Digital outputs are deferred until then too. */
+    void on_not_operational();
+
     // Active RDK joint groups and their DoF, ordered [EXT_AXIS, ARM_1, ARM_2] to match
     // rdk_to_ros_map_.
     std::vector<std::pair<flexiv::rdk::JointGroup, size_t>> active_groups_;

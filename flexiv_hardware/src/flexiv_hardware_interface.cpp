@@ -820,6 +820,16 @@ flexiv::rdk::Mode FlexivHardwareInterface::required_rdk_mode() const
     return effort_groups != 0 ? flexiv::rdk::Mode::RT_JOINT_TORQUE : rdk_control_mode_;
 }
 
+void FlexivHardwareInterface::on_not_operational()
+{
+    RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
+        "Robot is not operational (status %d), skipping commands",
+        static_cast<int>(robot_->operational_status()));
+    // The arm may be moved by hand before the robot is operational again.
+    std::fill(target_pos_buffer_.begin(), target_pos_buffer_.end(),
+        std::numeric_limits<double>::quiet_NaN());
+}
+
 hardware_interface::return_type FlexivHardwareInterface::read(
     const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/)
 {
@@ -890,6 +900,12 @@ hardware_interface::return_type FlexivHardwareInterface::read(
 hardware_interface::return_type FlexivHardwareInterface::write(
     const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/)
 {
+    // Returning ERROR here would finalize the component, and read() would stop reporting state.
+    if (!robot_->operational()) {
+        on_not_operational();
+        return hardware_interface::return_type::OK;
+    }
+
     const auto required_mode = required_rdk_mode();
     if (required_mode != flexiv::rdk::Mode::UNKNOWN && robot_->mode() != required_mode) {
         RCLCPP_ERROR_THROTTLE(getLogger(), log_clock_, 1000,
@@ -986,6 +1002,11 @@ hardware_interface::return_type FlexivHardwareInterface::write(
                 robot_->StreamJointPosition(rt_joint_position_cmds_);
             }
         } catch (const std::exception& e) {
+            // The robot can stop between the check at the top of write() and this stream.
+            if (!robot_->operational()) {
+                on_not_operational();
+                return hardware_interface::return_type::OK;
+            }
             RCLCPP_ERROR_THROTTLE(
                 getLogger(), log_clock_, 1000, "Failed to stream joint commands: %s", e.what());
             return hardware_interface::return_type::ERROR;
