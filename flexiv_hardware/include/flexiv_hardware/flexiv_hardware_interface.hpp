@@ -33,6 +33,7 @@
 
 // Flexiv
 #include "flexiv/rdk/robot.hpp"
+#include "flexiv/rdk/tool.hpp"
 
 namespace flexiv_hardware {
 
@@ -49,6 +50,13 @@ enum StoppingInterface
  * axis group plus up to two single arms (EXT_AXIS, ARM_1, ARM_2).
  */
 constexpr size_t kMaxJointGroups = 3;
+
+/** Command interfaces of an arm's `<arm prefix>payload`, in flexiv::rdk::ToolParams order: mass,
+ * CoM in the flange frame, then inertia at the CoM. */
+constexpr std::array<const char*, 10> kPayloadInterfaceNames
+    = {"mass", "com_x", "com_y", "com_z", "ixx", "iyy", "izz", "ixy", "ixz", "iyz"};
+
+using PayloadValues = std::array<double, kPayloadInterfaceNames.size()>;
 
 /**
  * ROS 2 command interface types that this hardware interface can claim and drive.
@@ -126,6 +134,13 @@ private:
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RobotStates> hw_flexiv_robot_states_by_group_;
     std::map<flexiv::rdk::JointGroup, double> hw_flexiv_robot_state_handles_by_group_;
 
+    // Payload commands per arm, parallel to arm_prefixes_; NaN until first commanded.
+    std::vector<PayloadValues> hw_commands_payloads_;
+
+    // Payload last sent to the robot per arm, so one the robot rejects is not retried at every
+    // rest. NaN until the first attempt.
+    std::vector<PayloadValues> requested_payloads_;
+
     // GPIO commands and states
     std::vector<double> hw_commands_gpio_out_;
     std::vector<double> hw_states_gpio_in_;
@@ -136,6 +151,9 @@ private:
     double hw_states_connected_ = 0.0;
     double hw_states_operational_ = 0.0;
     double hw_states_estop_released_ = 0.0;
+
+    // Joint name prefix of each arm, in RDK order: arm i is joint group ARM_<i+1>.
+    std::vector<std::string> arm_prefixes_;
 
     // Map from RDK joint index to ROS joint index
     // RDK expects: [ext_axis_1, ..., ext_axis_N, arm_joint_1, ..., arm_joint_7]
@@ -160,6 +178,51 @@ private:
 
     /** Mode-recovery attempts before write() gives up and errors the component. */
     static constexpr size_t kMaxConsecutiveModeRecoveries = 3;
+
+    std::unique_ptr<flexiv::rdk::Tool> tool_;
+
+    /** How long every arm must be at rest before a payload update may stop the robot. */
+    static constexpr double kPayloadRestSettleTimeSec = 0.5;
+
+    /** Largest gap between a position command and the measured position that a group resuming
+     * after a payload update streams; past it the group holds instead. */
+    static constexpr double kResumeGuardToleranceRad = 1e-3;
+
+    /** Seconds since the epoch of `write()`'s clock at which the robot came to rest, or NaN
+     * when it is not at rest. */
+    double rest_start_sec_;
+
+    std::vector<double> previous_commands_joint_positions_;
+
+    /** Stream failures write() tolerates straight after a payload update's SwitchMode() without
+     * counting them toward kMaxConsecutiveStreamFailures. Believed to clear within a few cycles;
+     * unverified. */
+    static constexpr size_t kPayloadResumeGraceCycles = 50;
+
+    /** Tolerated stream failures left, reset by the first successful stream. */
+    size_t payload_resume_grace_cycles_ {0};
+
+    /** Per joint group, parallel to active_groups_: whether it is holding until its position
+     * command rejoins the measured position after a payload update. */
+    std::array<bool, kMaxJointGroups> resume_guarded_ {};
+
+    /** Whether any arm's payload command differs from the one last sent to the robot. */
+    bool has_pending_payload() const;
+
+    /** Advance rest_start_sec_: at rest while the robot reports every joint group stopped and no
+     * position command changes. */
+    void update_rest_start(const rclcpp::Time& time);
+
+    /**
+     * Stop the robot, send every pending payload, and restore required_mode.
+     *
+     * Both arms stop, because the RDK accepts tool changes only in IDLE and the control mode is
+     * robot-wide; write() calls this only once every arm has been at rest for
+     * kPayloadRestSettleTimeSec.
+     * @return ERROR when the robot cannot be stopped or put back in required_mode. A payload the
+     *         robot rejects is logged and skipped, since the robot then keeps its previous one.
+     */
+    hardware_interface::return_type apply_pending_payloads(flexiv::rdk::Mode required_mode);
 
     /**
      * Resolve which joint groups a set of command interface names fully claims, and with which

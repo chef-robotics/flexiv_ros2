@@ -8,7 +8,8 @@ Chef-specific context for this fork. Kept in its own file rather than in
 `chef/humble-v2.1` is the branch chef builds and the one `ChefAutonomy`'s
 submodule tracks. It is upstream `56a7927` ("Release/Flexiv ROS 2 Humble 2.1")
 plus upstream's three `feature/independent-per-arm-control-humble` commits,
-chef's control-mode-loss handling, and these notes.
+chef's control-mode-loss handling, chef's per-arm payload interface,
+and these notes.
 
 The branch exists to pin a pairing: this driver release is the one that matches
 RDK v2.1, which is what the Enlight's `v3E.1` software requires. See "Why not
@@ -20,7 +21,7 @@ per-arm initial positions all live in `flexiv_description` on its own
 and the dual-arm macro are still that repo's, so there is nothing here to carry
 them.
 
-## Independent per-arm control comes from an upstream *experimental* branch
+## Independent per-arm control comes from an upstream _experimental_ branch
 
 `57bddc5`, `bec3202` and `a2856a9` are upstream's `832e6e5`, `a72c44e` and
 `daad9d1` from `feature/independent-per-arm-control-humble`, cherry-picked
@@ -76,10 +77,45 @@ defect — a controller must never report success when its hardware is
 unavailable. Humble's `controller_manager` does not deactivate controllers when
 a component errors, so that needs a chef-side watchdog or an upstream change.
 
+## Chef sets each arm's payload through command interfaces
+
+The hardware interface exports ten command interfaces per arm under
+`<arm prefix>payload` (e.g. `arm1_payload/mass`), in `rdk::ToolParams` order:
+`mass`, `com_x`..`com_z` (flange frame), then `ixx`, `iyy`, `izz`, `ixy`,
+`ixz`, `iyz` at the CoM. Any controller may write them; chef uses a
+`forward_command_controller/MultiInterfaceForwardCommandController` per arm.
+They are exported from code, not declared in `flexiv_description`, so
+`mock_components/GenericSystem` does not have them.
+
+A payload is an RDK tool, applied as `chef_payload_ARM_<n>`: `Tool::Add` or
+`Update`, then `Switch`. The arm's active TCP is carried over, so only the
+mass properties change. Every `Tool` call requires IDLE, and the control
+mode is robot-wide, so an update stops **both** arms. `write()` does it only
+once the robot has reported every group stopped, with no position command
+changing, for `kPayloadRestSettleTimeSec`: `Stop()`, set each changed arm,
+`SwitchMode()` back. A command that has not changed since it was last sent is
+never resent, even if the robot rejected it; after `on_activate()` every
+commanded payload is sent again.
+
+The update blocks the control loop. A trajectory whose start stamp passes
+during it would be sampled part-way through, so after resuming, a position
+group holds at its measured position until its command comes back within
+`kResumeGuardToleranceRad`. One that never does keeps holding (and logs)
+until a new trajectory starts from where the arm is.
+
+`write()` tolerates a bounded run of stream failures (see the
+control-mode-loss section). For `kPayloadResumeGraceCycles` after a payload
+update's `SwitchMode()` a failed stream does not count toward that bound,
+in case the robot is not yet accepting streams.
+
+Unverified on hardware: how long the stop/update/resume takes, whether streams
+fail straight after it, and whether `Tool::Update` on the arm's active tool
+takes effect without the `Switch`.
+
 ## Why not the consolidated `humble` line
 
-Upstream `5f68f15` ("Adapt to consolidated flexiv_description") moved the
-`<ros2_control>` block and the dual-arm xacro *into* this repo, under
+Upstream `5f68f15` ("Adapt to consolidated flexiv*description") moved the
+`<ros2_control>` block and the dual-arm xacro \_into* this repo, under
 `flexiv_hardware/urdf/` and `flexiv_hardware/ros2_control/`, and bumped the RDK
 to `release/v2.2`.
 

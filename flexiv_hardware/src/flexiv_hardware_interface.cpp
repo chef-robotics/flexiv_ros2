@@ -162,6 +162,35 @@ GroupDofList determine_active_groups(
     return active_groups;
 }
 
+/** Whether `command` is a complete payload that has not been sent to the robot yet. */
+bool payload_differs(
+    const flexiv_hardware::PayloadValues& command, const flexiv_hardware::PayloadValues& requested)
+{
+    return std::all_of(command.begin(), command.end(), [](double v) { return std::isfinite(v); })
+           && command != requested;
+}
+
+/**
+ * Make `group` use a chef-owned tool carrying `payload`, keeping the TCP of its active tool.
+ *
+ * @throw std::exception as the flexiv::rdk::Tool calls do, including when the robot is not IDLE.
+ */
+void set_arm_payload(flexiv::rdk::Tool& tool, flexiv::rdk::JointGroup group,
+    const flexiv_hardware::PayloadValues& payload)
+{
+    const std::string name = "chef_payload_" + joint_group_name_string(group);
+    auto params = tool.params(group);
+    params.mass = payload[0];
+    params.CoM = {payload[1], payload[2], payload[3]};
+    params.inertia = {payload[4], payload[5], payload[6], payload[7], payload[8], payload[9]};
+    if (tool.exist(name)) {
+        tool.Update(name, params);
+    } else {
+        tool.Add(name, params);
+    }
+    tool.Switch(group, name);
+}
+
 /** Interface a joint group ends up claimed with, given what a mode switch starts and stops. */
 uint8_t next_claimed_interface(uint8_t current, uint8_t starting, uint8_t stopping)
 {
@@ -244,6 +273,10 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
     target_torque_buffer_.resize(info_.joints.size(), 0.0);
     hw_states_gpio_in_.resize(flexiv::rdk::kIOPorts, std::numeric_limits<double>::quiet_NaN());
     hw_commands_gpio_out_.resize(flexiv::rdk::kIOPorts, std::numeric_limits<double>::quiet_NaN());
+    previous_commands_joint_positions_.resize(
+        info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
+    rest_start_sec_ = std::numeric_limits<double>::quiet_NaN();
+    resume_guarded_.fill(false);
     rt_joint_position_cmds_.clear();
     rt_joint_torque_cmds_.clear();
     active_groups_.clear();
@@ -282,6 +315,12 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
             "a dual-arm setup");
         return hardware_interface::CallbackReturn::ERROR;
     }
+
+    arm_prefixes_ = arm_prefixes;
+    PayloadValues unset_payload;
+    unset_payload.fill(std::numeric_limits<double>::quiet_NaN());
+    hw_commands_payloads_.assign(arm_prefixes_.size(), unset_payload);
+    requested_payloads_.assign(arm_prefixes_.size(), unset_payload);
 
     // Build RDK to ROS joint mapping
     std::vector<size_t> arm_indices;
@@ -597,6 +636,14 @@ FlexivHardwareInterface::export_command_interfaces()
             gpio_interface_name, "digital_output_" + std::to_string(i), &hw_commands_gpio_out_[i]));
     }
 
+    for (size_t i = 0; i < arm_prefixes_.size(); ++i) {
+        const std::string payload_interface_name = arm_prefixes_[i] + "payload";
+        for (size_t k = 0; k < kPayloadInterfaceNames.size(); ++k) {
+            command_interfaces.emplace_back(hardware_interface::CommandInterface(
+                payload_interface_name, kPayloadInterfaceNames[k], &hw_commands_payloads_[i][k]));
+        }
+    }
+
     return command_interfaces;
 }
 
@@ -701,11 +748,18 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_activate(
             torque_cmd.enable_soft_limits = true;
         }
 
+        tool_ = std::make_unique<flexiv::rdk::Tool>(*robot_);
+
         // Start from a known state: no joint group claimed, robot idle, every hold target latched.
         if (robot_->mode() != flexiv::rdk::Mode::IDLE) {
             robot_->Stop();
         }
         claimed_interfaces_.fill(kInterfaceNone);
+        resume_guarded_.fill(false);
+        // Resend every commanded payload: the robot's tools may have been edited meanwhile.
+        for (auto& requested : requested_payloads_) {
+            requested.fill(std::numeric_limits<double>::quiet_NaN());
+        }
     } catch (const std::exception& e) {
         RCLCPP_FATAL(getLogger(), "Could not enable robot.");
         RCLCPP_FATAL(getLogger(), e.what());
@@ -898,7 +952,7 @@ hardware_interface::return_type FlexivHardwareInterface::read(
 }
 
 hardware_interface::return_type FlexivHardwareInterface::write(
-    const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/)
+    const rclcpp::Time& time, const rclcpp::Duration& /*period*/)
 {
     // Returning ERROR here would finalize the component, and read() would stop reporting state.
     if (!robot_->operational()) {
@@ -952,6 +1006,12 @@ hardware_interface::return_type FlexivHardwareInterface::write(
     }
     consecutive_mode_recoveries_ = 0;
 
+    update_rest_start(time);
+    if (has_pending_payload() && std::isfinite(rest_start_sec_)
+        && time.seconds() - rest_start_sec_ >= kPayloadRestSettleTimeSec) {
+        return apply_pending_payloads(required_mode);
+    }
+
     const bool torque_control = required_mode == flexiv::rdk::Mode::RT_JOINT_TORQUE;
 
     auto& target_pos = target_pos_buffer_;
@@ -992,6 +1052,26 @@ hardware_interface::return_type FlexivHardwareInterface::write(
                             ? std::isfinite(hw_commands_joint_positions_[ros_idx])
                             : std::isfinite(hw_commands_joint_velocities_[ros_idx])
                                   && std::isfinite(hw_states_joint_positions_[ros_idx]);
+        }
+
+        // A trajectory that started while a payload update had the robot stopped would be joined
+        // part-way through, as a step; hold until the command rejoins the arm instead.
+        if (commanded && resume_guarded_[g] && claimed_interfaces_[g] == kInterfacePosition) {
+            double max_gap = 0.0;
+            for (size_t k = 0; k < group_dof; ++k) {
+                const size_t ros_idx = rdk_to_ros_map_[offset + k];
+                max_gap = std::max(max_gap, std::abs(hw_commands_joint_positions_[ros_idx]
+                                                     - hw_states_joint_positions_[ros_idx]));
+            }
+            if (max_gap > kResumeGuardToleranceRad) {
+                commanded = false;
+                RCLCPP_ERROR_THROTTLE(getLogger(), log_clock_, 1000,
+                    "Joint group %s is holding after a payload update: its position command is "
+                    "%.4f rad from the measured position",
+                    joint_group_name_string(group).c_str(), max_gap);
+            } else {
+                resume_guarded_[g] = false;
+            }
         }
 
         if (commanded) {
@@ -1048,6 +1128,14 @@ hardware_interface::return_type FlexivHardwareInterface::write(
                 on_not_operational();
                 return hardware_interface::return_type::OK;
             }
+            // A stream rejected just after a payload update's SwitchMode() does not count
+            // toward the consecutive-failure bound below.
+            if (payload_resume_grace_cycles_ > 0) {
+                --payload_resume_grace_cycles_;
+                RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
+                    "Failed to stream joint commands after a payload update: %s", e.what());
+                return hardware_interface::return_type::OK;
+            }
             // A stream rejected just after a mode transition clears in a cycle or two, and
             // erroring is terminal (see the mode check above), so tolerate a bounded run.
             ++consecutive_stream_failures_;
@@ -1063,6 +1151,7 @@ hardware_interface::return_type FlexivHardwareInterface::write(
             return hardware_interface::return_type::ERROR;
         }
         consecutive_stream_failures_ = 0;
+        payload_resume_grace_cycles_ = 0;
     }
 
     // Write digital output
@@ -1197,6 +1286,7 @@ hardware_interface::return_type FlexivHardwareInterface::perform_command_mode_sw
         if (next_interface != claimed_interfaces_[g]) {
             any_change = true;
             claimed_interfaces_[g] = next_interface;
+            resume_guarded_[g] = false;
 
             for (size_t k = 0; k < active_groups_[g].second; ++k) {
                 const size_t ros_idx = rdk_to_ros_map_[offset + k];
@@ -1255,6 +1345,90 @@ hardware_interface::return_type FlexivHardwareInterface::perform_command_mode_sw
         return hardware_interface::return_type::ERROR;
     }
 
+    return hardware_interface::return_type::OK;
+}
+
+bool FlexivHardwareInterface::has_pending_payload() const
+{
+    for (size_t i = 0; i < hw_commands_payloads_.size(); ++i) {
+        if (payload_differs(hw_commands_payloads_[i], requested_payloads_[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void FlexivHardwareInterface::update_rest_start(const rclcpp::Time& time)
+{
+    bool commands_unchanged = true;
+    for (size_t i = 0; i < hw_commands_joint_positions_.size(); ++i) {
+        const double command = hw_commands_joint_positions_[i];
+        const double previous = previous_commands_joint_positions_[i];
+        commands_unchanged &= command == previous || (std::isnan(command) && std::isnan(previous));
+    }
+    std::copy(hw_commands_joint_positions_.begin(), hw_commands_joint_positions_.end(),
+        previous_commands_joint_positions_.begin());
+
+    if (!commands_unchanged || !robot_->all_stopped()) {
+        rest_start_sec_ = std::numeric_limits<double>::quiet_NaN();
+        return;
+    }
+    if (std::isnan(rest_start_sec_)) {
+        rest_start_sec_ = time.seconds();
+    }
+}
+
+hardware_interface::return_type FlexivHardwareInterface::apply_pending_payloads(
+    flexiv::rdk::Mode required_mode)
+{
+    try {
+        if (robot_->mode() != flexiv::rdk::Mode::IDLE) {
+            robot_->Stop();
+        }
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(getLogger(), "Failed to stop the robot for a payload update: %s", e.what());
+        return hardware_interface::return_type::ERROR;
+    }
+
+    // Arms follow any external-axis group in active_groups_, in arm_prefixes_ order.
+    const size_t first_arm_group = active_groups_.size() - arm_prefixes_.size();
+    for (size_t i = 0; i < arm_prefixes_.size(); ++i) {
+        const auto& payload = hw_commands_payloads_[i];
+        if (!payload_differs(payload, requested_payloads_[i])) {
+            continue;
+        }
+        requested_payloads_[i] = payload;
+        const auto group_name = joint_group_name_string(active_groups_[first_arm_group + i].first);
+        try {
+            set_arm_payload(*tool_, active_groups_[first_arm_group + i].first, payload);
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(
+                getLogger(), "Failed to set the %s payload: %s", group_name.c_str(), e.what());
+            continue;
+        }
+        RCLCPP_INFO(getLogger(), "Set the %s payload: %.3f kg, CoM [%.4f, %.4f, %.4f] m",
+            group_name.c_str(), payload[0], payload[1], payload[2], payload[3]);
+    }
+
+    // Stop() invalidated the held targets; the seeding in write() re-reads the measured position.
+    std::fill(target_pos_buffer_.begin(), target_pos_buffer_.end(),
+        std::numeric_limits<double>::quiet_NaN());
+    rest_start_sec_ = std::numeric_limits<double>::quiet_NaN();
+    if (required_mode == flexiv::rdk::Mode::UNKNOWN) {
+        return hardware_interface::return_type::OK;
+    }
+
+    try {
+        robot_->SwitchMode(required_mode);
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(getLogger(),
+            "Failed to resume the RDK control mode after a payload update: %s", e.what());
+        return hardware_interface::return_type::ERROR;
+    }
+    for (size_t g = 0; g < active_groups_.size(); ++g) {
+        resume_guarded_[g] = claimed_interfaces_[g] == kInterfacePosition;
+    }
+    payload_resume_grace_cycles_ = kPayloadResumeGraceCycles;
     return hardware_interface::return_type::OK;
 }
 
