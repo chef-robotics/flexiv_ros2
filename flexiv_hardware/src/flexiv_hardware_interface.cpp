@@ -560,6 +560,18 @@ std::vector<hardware_interface::StateInterface> FlexivHardwareInterface::export_
             gpio_interface_name, "digital_input_" + std::to_string(i), &hw_states_gpio_in_[i]));
     }
 
+    // Health describes the controller box, not a joint group, so it is exported
+    // once rather than per group, under a name carrying no serial number.
+    const std::string health_interface_name = "robot_health";
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        health_interface_name, "operational_status", &hw_states_operational_status_));
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        health_interface_name, "connected", &hw_states_connected_));
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        health_interface_name, "operational", &hw_states_operational_));
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        health_interface_name, "estop_released", &hw_states_estop_released_));
+
     return state_interfaces;
 }
 
@@ -808,9 +820,25 @@ flexiv::rdk::Mode FlexivHardwareInterface::required_rdk_mode() const
     return effort_groups != 0 ? flexiv::rdk::Mode::RT_JOINT_TORQUE : rdk_control_mode_;
 }
 
+void FlexivHardwareInterface::on_not_operational()
+{
+    RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
+        "Robot is not operational (status %d), skipping commands",
+        static_cast<int>(robot_->operational_status()));
+    // The arm may be moved by hand before the robot is operational again.
+    std::fill(target_pos_buffer_.begin(), target_pos_buffer_.end(),
+        std::numeric_limits<double>::quiet_NaN());
+}
+
 hardware_interface::return_type FlexivHardwareInterface::read(
     const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/)
 {
+    hw_states_operational_status_
+        = static_cast<double>(static_cast<int>(robot_->operational_status()));
+    hw_states_connected_ = static_cast<double>(robot_->connected());
+    hw_states_operational_ = static_cast<double>(robot_->operational());
+    hw_states_estop_released_ = static_cast<double>(robot_->estop_released());
+
     if (!robot_->operational()) {
         return hardware_interface::return_type::OK;
     }
@@ -872,6 +900,12 @@ hardware_interface::return_type FlexivHardwareInterface::read(
 hardware_interface::return_type FlexivHardwareInterface::write(
     const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/)
 {
+    // Returning ERROR here would finalize the component, and read() would stop reporting state.
+    if (!robot_->operational()) {
+        on_not_operational();
+        return hardware_interface::return_type::OK;
+    }
+
     const auto required_mode = required_rdk_mode();
     if (required_mode != flexiv::rdk::Mode::UNKNOWN && robot_->mode() != required_mode) {
         // Re-enter a mode that merely lapsed, rather than returning ERROR: ros2_control
@@ -880,8 +914,12 @@ hardware_interface::return_type FlexivHardwareInterface::write(
         //
         // Bounded because the robot can leave the mode faster than it can be put back -- a CAT2
         // safety stop does so every cycle while fault() still reads false.
-        if (robot_->operational() && !robot_->fault()
-            && ++consecutive_mode_recoveries_ <= kMaxConsecutiveModeRecoveries) {
+        if (!robot_->operational()) {
+            // The robot can stop between the check at the top of write() and here.
+            on_not_operational();
+            return hardware_interface::return_type::OK;
+        }
+        if (!robot_->fault() && ++consecutive_mode_recoveries_ <= kMaxConsecutiveModeRecoveries) {
             try {
                 RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
                     "Robot left the expected RDK control mode; re-entering it");
@@ -891,6 +929,10 @@ hardware_interface::return_type FlexivHardwareInterface::write(
                 std::fill(target_pos_buffer_.begin(), target_pos_buffer_.end(),
                     std::numeric_limits<double>::quiet_NaN());
             } catch (const std::exception& e) {
+                if (!robot_->operational()) {
+                    on_not_operational();
+                    return hardware_interface::return_type::OK;
+                }
                 RCLCPP_ERROR_THROTTLE(getLogger(), log_clock_, 1000,
                     "Failed to re-enter the expected RDK control mode: %s", e.what());
                 return hardware_interface::return_type::ERROR;
@@ -904,8 +946,8 @@ hardware_interface::return_type FlexivHardwareInterface::write(
 
         RCLCPP_ERROR_THROTTLE(getLogger(), log_clock_, 1000,
             "Robot is no longer in the expected RDK control mode and could not be recovered "
-            "(operational=%d, fault=%d, recovery attempts=%zu), skipping joint commands",
-            (int)robot_->operational(), (int)robot_->fault(), consecutive_mode_recoveries_);
+            "(fault=%d, recovery attempts=%zu), skipping joint commands",
+            (int)robot_->fault(), consecutive_mode_recoveries_);
         return hardware_interface::return_type::ERROR;
     }
     consecutive_mode_recoveries_ = 0;
@@ -1001,6 +1043,11 @@ hardware_interface::return_type FlexivHardwareInterface::write(
                 robot_->StreamJointPosition(rt_joint_position_cmds_);
             }
         } catch (const std::exception& e) {
+            // The robot can stop between the check at the top of write() and this stream.
+            if (!robot_->operational()) {
+                on_not_operational();
+                return hardware_interface::return_type::OK;
+            }
             // A stream rejected just after a mode transition clears in a cycle or two, and
             // erroring is terminal (see the mode check above), so tolerate a bounded run.
             ++consecutive_stream_failures_;

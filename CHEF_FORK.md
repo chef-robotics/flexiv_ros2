@@ -48,6 +48,9 @@ Constraints worth knowing before designing against it:
   Upstream gates streaming on a group being actively commanded, which computes
   the hold targets and then discards them; chef removed that gate, so the hold
   is real here. See "Chef keeps the component alive across control-mode loss".
+- While the robot is not operational (e.g. E-stopped) `write()` skips its
+  commands and returns `OK`, so `read()` keeps reporting the robot's state;
+  getting it operational again still needs `on_activate()`.
 
 Being an experimental branch, expect this to be rebased or replaced upstream;
 re-check it before any future sync.
@@ -55,10 +58,11 @@ re-check it before any future sync.
 ## Chef keeps the component alive across control-mode loss
 
 Upstream's `write()` returns `ERROR` on any mode mismatch, stream exception or
-GPIO failure. That is terminal: `ros2_control` deactivates the component and
-`on_error()` drops every claim. The controllers stay `active` over the corpse
-and go on reporting "Goal reached, success!" while the arm does not move —
-seen in on-hardware testing with both arms >120 deg from their commanded pose
+GPIO failure. That is terminal: `ros2_control` finalizes the component, stops
+calling `read()` on it, and `on_error()` drops every claim.
+The controllers stay `active` over the corpse and go on reporting
+"Goal reached, success!" while the arm does not move — seen in
+on-hardware testing with both arms >120 deg from their commanded pose
 while the stack reported success.
 
 So `write()` here streams every cycle whose targets are valid, tries to
