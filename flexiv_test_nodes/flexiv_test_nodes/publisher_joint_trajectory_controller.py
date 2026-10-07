@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import rclpy
 from builtin_interfaces.msg import Duration
 from rclpy.node import Node
@@ -31,6 +33,11 @@ class PublisherJointTrajectory(Node):
         self.declare_parameter("joints", [""])
         self.declare_parameter("check_starting_point", False)
         self.declare_parameter("starting_point_limits", False)
+        self.declare_parameter("sine_sweep", False)
+        self.declare_parameter("sine_amplitude_rad", 0.035)
+        self.declare_parameter("sine_frequency_hz", 0.3)
+        self.declare_parameter("sine_cycles", 1)
+        self.declare_parameter("sine_sample_period_sec", 0.05)
 
         # Read parameters
         controller_name = self.get_parameter("controller_name").value
@@ -40,6 +47,15 @@ class PublisherJointTrajectory(Node):
         self.joints = self.get_parameter("joints").value
         self.check_starting_point = self.get_parameter("check_starting_point").value
         self.starting_point = {}
+        self.sine_sweep = self.get_parameter("sine_sweep").value
+        self.sine_amplitude_rad = float(self.get_parameter("sine_amplitude_rad").value)
+        self.sine_frequency_hz = float(self.get_parameter("sine_frequency_hz").value)
+        self.sine_cycles = int(self.get_parameter("sine_cycles").value)
+        self.sine_sample_period_sec = float(
+            self.get_parameter("sine_sample_period_sec").value
+        )
+        if self.sine_sweep:
+            self.check_sine_sweep(wait_sec_between_publish)
 
         if self.joints is None or len(self.joints) == 0:
             raise Exception('"joints" parameter is not set!')
@@ -96,12 +112,11 @@ class PublisherJointTrajectory(Node):
             traj.joint_names = self.joints
             point = JointTrajectoryPoint()
             point.positions = self.goals[self.i]
-            point.time_from_start = Duration(
-                sec=int(self.goal_duration_sec),
-                nanosec=int((self.goal_duration_sec % 1.0) * 1e9),
-            )
+            point.time_from_start = _duration(self.goal_duration_sec)
 
             traj.points.append(point)
+            if self.sine_sweep:
+                traj.points.extend(self.sine_sweep_points(self.goals[self.i]))
             self.publisher_.publish(traj)
 
             self.i += 1
@@ -139,6 +154,48 @@ class PublisherJointTrajectory(Node):
             self.joint_state_msg_received = True
         else:
             return
+
+    def check_sine_sweep(self, wait_sec_between_publish):
+        if self.sine_frequency_hz <= 0.0 or self.sine_sample_period_sec <= 0.0:
+            raise Exception(
+                '"sine_frequency_hz" and "sine_sample_period_sec" must be positive!'
+            )
+        sweep_duration_sec = (
+            self.goal_duration_sec + self.sine_cycles / self.sine_frequency_hz
+        )
+        if wait_sec_between_publish >= sweep_duration_sec:
+            return
+        self.get_logger().warn(
+            f"Each sine sweep takes {sweep_duration_sec:.1f} s but a new one"
+            f" is published every {wait_sec_between_publish} s;"
+            " the sweeps will interrupt each other."
+        )
+
+    def sine_sweep_points(self, center):
+        """Sweep every joint by 1 - cos around `center`, from rest back to rest."""
+        omega = 2.0 * math.pi * self.sine_frequency_hz
+        sweep_duration_sec = self.sine_cycles / self.sine_frequency_hz
+        steps = max(1, round(sweep_duration_sec / self.sine_sample_period_sec))
+        points = []
+        for k in range(1, steps + 1):
+            t = k * sweep_duration_sec / steps
+            phase = omega * t
+            offset = self.sine_amplitude_rad * (1.0 - math.cos(phase))
+            point = JointTrajectoryPoint()
+            point.positions = [q + offset for q in center]
+            point.velocities = [
+                self.sine_amplitude_rad * omega * math.sin(phase)
+            ] * len(center)
+            point.accelerations = [
+                self.sine_amplitude_rad * omega * omega * math.cos(phase)
+            ] * len(center)
+            point.time_from_start = _duration(self.goal_duration_sec + t)
+            points.append(point)
+        return points
+
+
+def _duration(sec):
+    return Duration(sec=int(sec), nanosec=int((sec % 1.0) * 1e9))
 
 
 def main(args=None):

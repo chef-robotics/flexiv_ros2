@@ -59,3 +59,19 @@ ros2 run flexiv_test_nodes robot_states_monitor --ros-args -p robot_sn:=[robot_s
 ## Publisher Joint Trajectory Controller
 
 Example node to send joint position commands to the joint trajectory controller.
+
+### Sine sweep
+
+With `sine_sweep:=true` every published trajectory moves to the goal and then
+sweeps all joints around it with velocities and accelerations filled in, so a
+controller configured with `[position, velocity, acceleration]` command
+interfaces streams them as feedforward. Parameters, defaulting to the RDK's
+realtime joint position example:
+
+- `sine_amplitude_rad` (0.035)
+- `sine_frequency_hz` (0.3)
+- `sine_cycles` (1)
+- `sine_sample_period_sec` (0.05)
+
+`wait_sec_between_publish` must cover `goal_duration_sec` plus
+`sine_cycles / sine_frequency_hz`, or the sweeps interrupt each other.
