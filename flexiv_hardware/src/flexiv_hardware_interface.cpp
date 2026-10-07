@@ -225,10 +225,13 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
         info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
     hw_commands_joint_velocities_.resize(
         info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
+    hw_commands_joint_accelerations_.resize(
+        info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
     hw_commands_joint_efforts_.resize(
         info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
     target_pos_buffer_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
     target_vel_buffer_.resize(info_.joints.size(), 0.0);
+    target_acc_buffer_.resize(info_.joints.size(), 0.0);
     target_torque_buffer_.resize(info_.joints.size(), 0.0);
     hw_states_gpio_in_.resize(flexiv::rdk::kIOPorts, std::numeric_limits<double>::quiet_NaN());
     hw_commands_gpio_out_.resize(flexiv::rdk::kIOPorts, std::numeric_limits<double>::quiet_NaN());
@@ -390,32 +393,35 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
         return hardware_interface::CallbackReturn::ERROR;
     }
 
+    // The acceleration command interface is optional so that older descriptions keep loading.
+    const std::vector<std::string> command_interfaces_without_acceleration
+        = {hardware_interface::HW_IF_POSITION, hardware_interface::HW_IF_VELOCITY,
+            hardware_interface::HW_IF_EFFORT};
+    const std::vector<std::string> command_interfaces_with_acceleration
+        = {hardware_interface::HW_IF_POSITION, hardware_interface::HW_IF_VELOCITY,
+            hardware_interface::HW_IF_ACCELERATION, hardware_interface::HW_IF_EFFORT};
+
     for (const hardware_interface::ComponentInfo& joint : info_.joints) {
-        if (joint.command_interfaces.size() != 3) {
-            RCLCPP_FATAL(getLogger(), "Joint '%s' has %ld command interfaces found. 3 expected.",
-                joint.name.c_str(), joint.command_interfaces.size());
+        const auto& expected_command_interfaces
+            = joint.command_interfaces.size() == command_interfaces_with_acceleration.size()
+                  ? command_interfaces_with_acceleration
+                  : command_interfaces_without_acceleration;
+        if (joint.command_interfaces.size() != expected_command_interfaces.size()) {
+            RCLCPP_FATAL(getLogger(),
+                "Joint '%s' has %ld command interfaces found. %zu or %zu expected.",
+                joint.name.c_str(), joint.command_interfaces.size(),
+                command_interfaces_without_acceleration.size(),
+                command_interfaces_with_acceleration.size());
             return hardware_interface::CallbackReturn::ERROR;
         }
 
-        if (joint.command_interfaces[0].name != hardware_interface::HW_IF_POSITION) {
-            RCLCPP_FATAL(getLogger(), "Joint '%s' has '%s' command interface. Expected '%s'",
-                joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
-                hardware_interface::HW_IF_POSITION);
-            return hardware_interface::CallbackReturn::ERROR;
-        }
-
-        if (joint.command_interfaces[1].name != hardware_interface::HW_IF_VELOCITY) {
-            RCLCPP_FATAL(getLogger(), "Joint '%s' has '%s' command interface. Expected '%s'",
-                joint.name.c_str(), joint.command_interfaces[1].name.c_str(),
-                hardware_interface::HW_IF_VELOCITY);
-            return hardware_interface::CallbackReturn::ERROR;
-        }
-
-        if (joint.command_interfaces[2].name != hardware_interface::HW_IF_EFFORT) {
-            RCLCPP_FATAL(getLogger(), "Joint '%s' has '%s' command interface. Expected '%s'",
-                joint.name.c_str(), joint.command_interfaces[2].name.c_str(),
-                hardware_interface::HW_IF_EFFORT);
-            return hardware_interface::CallbackReturn::ERROR;
+        for (size_t i = 0; i < expected_command_interfaces.size(); ++i) {
+            if (joint.command_interfaces[i].name != expected_command_interfaces[i]) {
+                RCLCPP_FATAL(getLogger(), "Joint '%s' has '%s' command interface. Expected '%s'",
+                    joint.name.c_str(), joint.command_interfaces[i].name.c_str(),
+                    expected_command_interfaces[i].c_str());
+                return hardware_interface::CallbackReturn::ERROR;
+            }
         }
 
         if (joint.state_interfaces.size() != 3) {
@@ -574,6 +580,8 @@ FlexivHardwareInterface::export_command_interfaces()
             hardware_interface::HW_IF_POSITION, &hw_commands_joint_positions_[i]));
         command_interfaces.emplace_back(hardware_interface::CommandInterface(info_.joints[i].name,
             hardware_interface::HW_IF_VELOCITY, &hw_commands_joint_velocities_[i]));
+        command_interfaces.emplace_back(hardware_interface::CommandInterface(info_.joints[i].name,
+            hardware_interface::HW_IF_ACCELERATION, &hw_commands_joint_accelerations_[i]));
         command_interfaces.emplace_back(hardware_interface::CommandInterface(info_.joints[i].name,
             hardware_interface::HW_IF_EFFORT, &hw_commands_joint_efforts_[i]));
     }
@@ -794,6 +802,39 @@ flexiv::rdk::Mode FlexivHardwareInterface::required_rdk_mode() const
     return effort_groups != 0 ? flexiv::rdk::Mode::RT_JOINT_TORQUE : rdk_control_mode_;
 }
 
+bool FlexivHardwareInterface::is_joint_commanded(uint8_t claim, size_t ros_idx) const
+{
+    switch (claim) {
+        case kInterfacePosition:
+            return std::isfinite(hw_commands_joint_positions_[ros_idx]);
+        case kInterfaceVelocity:
+            return std::isfinite(hw_commands_joint_velocities_[ros_idx])
+                   && std::isfinite(hw_states_joint_positions_[ros_idx]);
+        case kInterfaceTrajectory:
+            return std::isfinite(hw_commands_joint_positions_[ros_idx])
+                   && std::isfinite(hw_commands_joint_velocities_[ros_idx])
+                   && std::isfinite(hw_commands_joint_accelerations_[ros_idx]);
+        default:
+            return false;
+    }
+}
+
+FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
+    uint8_t claim, size_t rdk_idx) const
+{
+    const size_t ros_idx = rdk_to_ros_map_[rdk_idx];
+    if (claim == kInterfacePosition) {
+        return {hw_commands_joint_positions_[ros_idx], 0.0, 0.0};
+    }
+    if (claim == kInterfaceVelocity) {
+        // Velocity control feeds the measured position forward with the commanded velocity, as
+        // the position interface has no velocity to track.
+        return {hw_states_joint_positions_[ros_idx], hw_commands_joint_velocities_[ros_idx], 0.0};
+    }
+    return {hw_commands_joint_positions_[ros_idx], hw_commands_joint_velocities_[ros_idx],
+        hw_commands_joint_accelerations_[ros_idx]};
+}
+
 void FlexivHardwareInterface::on_not_operational()
 {
     RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
@@ -930,6 +971,7 @@ hardware_interface::return_type FlexivHardwareInterface::write(
 
     auto& target_pos = target_pos_buffer_;
     auto& target_vel = target_vel_buffer_;
+    auto& target_acc = target_acc_buffer_;
     auto& target_torque = target_torque_buffer_;
 
     bool targets_valid = true;
@@ -958,28 +1000,18 @@ hardware_interface::return_type FlexivHardwareInterface::write(
 
         // Check the whole group before writing any target, so a group that is not fully commanded
         // keeps the previous targets it is holding at.
-        bool commanded = claimed_interfaces_[g] == kInterfacePosition
-                         || claimed_interfaces_[g] == kInterfaceVelocity;
+        const uint8_t claim = claimed_interfaces_[g];
+        bool commanded = true;
         for (size_t k = 0; k < group_dof && commanded; ++k) {
-            const size_t ros_idx = rdk_to_ros_map_[offset + k];
-            commanded = claimed_interfaces_[g] == kInterfacePosition
-                            ? std::isfinite(hw_commands_joint_positions_[ros_idx])
-                            : std::isfinite(hw_commands_joint_velocities_[ros_idx])
-                                  && std::isfinite(hw_states_joint_positions_[ros_idx]);
+            commanded = is_joint_commanded(claim, rdk_to_ros_map_[offset + k]);
         }
 
         if (commanded) {
             for (size_t k = 0; k < group_dof; ++k) {
-                const size_t ros_idx = rdk_to_ros_map_[offset + k];
-                if (claimed_interfaces_[g] == kInterfacePosition) {
-                    target_pos[offset + k] = hw_commands_joint_positions_[ros_idx];
-                    target_vel[offset + k] = 0.0;
-                } else {
-                    // Velocity control feeds the measured position forward with the commanded
-                    // velocity, as the position interface has no velocity to track.
-                    target_pos[offset + k] = hw_states_joint_positions_[ros_idx];
-                    target_vel[offset + k] = hw_commands_joint_velocities_[ros_idx];
-                }
+                const JointTarget target = commanded_target(claim, offset + k);
+                target_pos[offset + k] = target.position;
+                target_vel[offset + k] = target.velocity;
+                target_acc[offset + k] = target.acceleration;
             }
         } else {
             for (size_t k = 0; k < group_dof && targets_valid; ++k) {
@@ -991,6 +1023,7 @@ hardware_interface::return_type FlexivHardwareInterface::write(
                     target_pos[offset + k] = q;
                 }
                 target_vel[offset + k] = 0.0;
+                target_acc[offset + k] = 0.0;
             }
             if (!targets_valid) {
                 break;
@@ -1000,6 +1033,7 @@ hardware_interface::return_type FlexivHardwareInterface::write(
         auto& cmd = rt_joint_position_cmds_.at(group);
         std::copy_n(target_pos.begin() + begin, group_dof, cmd.q_d.begin());
         std::copy_n(target_vel.begin() + begin, group_dof, cmd.dq_d.begin());
+        std::copy_n(target_acc.begin() + begin, group_dof, cmd.ddq_d.begin());
         offset += group_dof;
     }
 
@@ -1103,7 +1137,7 @@ hardware_interface::return_type FlexivHardwareInterface::prepare_command_mode_sw
 
     // Joints are claimed per RDK joint group rather than all at once, so that each arm of a
     // dual-arm robot can be driven by its own controller. A group must still be claimed whole and
-    // with a single interface type.
+    // with a single interface type, or with position, velocity and acceleration together.
     std::array<uint8_t, kMaxJointGroups> starting {};
     std::array<uint8_t, kMaxJointGroups> stopping {};
     if (!resolve_claimed_groups(start_interfaces, starting)
@@ -1176,6 +1210,8 @@ hardware_interface::return_type FlexivHardwareInterface::perform_command_mode_sw
                 const size_t ros_idx = rdk_to_ros_map_[offset + k];
                 hw_commands_joint_positions_[ros_idx] = std::numeric_limits<double>::quiet_NaN();
                 hw_commands_joint_velocities_[ros_idx] = std::numeric_limits<double>::quiet_NaN();
+                hw_commands_joint_accelerations_[ros_idx]
+                    = std::numeric_limits<double>::quiet_NaN();
                 hw_commands_joint_efforts_[ros_idx] = std::numeric_limits<double>::quiet_NaN();
             }
         }
@@ -1184,7 +1220,9 @@ hardware_interface::return_type FlexivHardwareInterface::perform_command_mode_sw
 
     position_controller_running_
         = std::find(claimed_interfaces_.begin(), claimed_interfaces_.end(), kInterfacePosition)
-          != claimed_interfaces_.end();
+              != claimed_interfaces_.end()
+          || std::find(claimed_interfaces_.begin(), claimed_interfaces_.end(), kInterfaceTrajectory)
+                 != claimed_interfaces_.end();
     velocity_controller_running_
         = std::find(claimed_interfaces_.begin(), claimed_interfaces_.end(), kInterfaceVelocity)
           != claimed_interfaces_.end();
