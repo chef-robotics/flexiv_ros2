@@ -1378,6 +1378,24 @@ void FlexivHardwareInterface::update_rest_start(const rclcpp::Time& time)
     }
 }
 
+void FlexivHardwareInterface::log_reported_payload(
+    flexiv::rdk::JointGroup group, const std::string& group_name)
+{
+    try {
+        const auto active_tool = tool_->name(group);
+        const auto reported = tool_->params(group);
+        RCLCPP_INFO(getLogger(),
+            "Robot reports %s active tool '%s': %.3f kg, CoM [%.4f, %.4f, %.4f] m, inertia "
+            "[%.5f, %.5f, %.5f, %.5f, %.5f, %.5f] kg*m^2",
+            group_name.c_str(), active_tool.c_str(), reported.mass, reported.CoM[0],
+            reported.CoM[1], reported.CoM[2], reported.inertia[0], reported.inertia[1],
+            reported.inertia[2], reported.inertia[3], reported.inertia[4], reported.inertia[5]);
+    } catch (const std::exception& e) {
+        RCLCPP_WARN(getLogger(), "Failed to read back the %s payload: %s", group_name.c_str(),
+            e.what());
+    }
+}
+
 hardware_interface::return_type FlexivHardwareInterface::apply_pending_payloads(
     flexiv::rdk::Mode required_mode)
 {
@@ -1398,9 +1416,10 @@ hardware_interface::return_type FlexivHardwareInterface::apply_pending_payloads(
             continue;
         }
         requested_payloads_[i] = payload;
-        const auto group_name = joint_group_name_string(active_groups_[first_arm_group + i].first);
+        const auto group = active_groups_[first_arm_group + i].first;
+        const auto group_name = joint_group_name_string(group);
         try {
-            set_arm_payload(*tool_, active_groups_[first_arm_group + i].first, payload);
+            set_arm_payload(*tool_, group, payload);
         } catch (const std::exception& e) {
             RCLCPP_ERROR(
                 getLogger(), "Failed to set the %s payload: %s", group_name.c_str(), e.what());
@@ -1408,6 +1427,7 @@ hardware_interface::return_type FlexivHardwareInterface::apply_pending_payloads(
         }
         RCLCPP_INFO(getLogger(), "Set the %s payload: %.3f kg, CoM [%.4f, %.4f, %.4f] m",
             group_name.c_str(), payload[0], payload[1], payload[2], payload[3]);
+        log_reported_payload(group, group_name);
     }
 
     // Stop() invalidated the held targets; the seeding in write() re-reads the measured position.

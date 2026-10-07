@@ -224,6 +224,10 @@ private:
      */
     hardware_interface::return_type apply_pending_payloads(flexiv::rdk::Mode required_mode);
 
+    /** Log the active tool and payload parameters the robot reports for `group`, so a set
+     * payload is confirmed against what the Flexiv controller actually registered. */
+    void log_reported_payload(flexiv::rdk::JointGroup group, const std::string& group_name);
+
     /**
      * Resolve which joint groups a set of command interface names fully claims, and with which
      * interface type.
