@@ -10,6 +10,7 @@
 #include <cmath>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -17,6 +18,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/clock.hpp>
@@ -53,6 +55,41 @@ std::string get_optional_hardware_parameter(
 {
     const auto it = info.hardware_parameters.find(key);
     return it != info.hardware_parameters.end() ? it->second : "";
+}
+
+template <typename T>
+std::optional<T> parse_number(const std::string& str)
+{
+    try {
+        if constexpr (std::is_integral_v<T>) {
+            return std::stoi(str);
+        } else {
+            return std::stod(str);
+        }
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+/**
+ * Parse the optional hardware parameter `name`, or return `fallback` when it is unset.
+ * @return std::nullopt, after logging, when it is set to anything but `expected`.
+ */
+template <typename T, typename IsValid>
+std::optional<T> parse_optional_parameter(const rclcpp::Logger& logger,
+    const hardware_interface::HardwareInfo& info, const std::string& name, const char* expected,
+    T fallback, IsValid is_valid)
+{
+    const std::string str = get_optional_hardware_parameter(info, name);
+    if (str.empty()) {
+        return fallback;
+    }
+    if (const std::optional<T> value = parse_number<T>(str); value && is_valid(*value)) {
+        return value;
+    }
+    RCLCPP_FATAL(
+        logger, "Parameter '%s' must be %s, got '%s'", name.c_str(), expected, str.c_str());
+    return std::nullopt;
 }
 
 std::string joint_group_name_string(flexiv::rdk::JointGroup group)
@@ -470,6 +507,17 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
         return hardware_interface::CallbackReturn::ERROR;
     }
 
+    const auto feedforward_time_constant
+        = parse_optional_parameter(getLogger(), info_, "feedforward_time_constant",
+            "a non-negative number of seconds", kDefaultFeedforwardTimeConstant,
+            [](double value) { return std::isfinite(value) && value >= 0.0; });
+    if (!feedforward_time_constant) {
+        return hardware_interface::CallbackReturn::ERROR;
+    }
+    feedforward_time_constant_ = *feedforward_time_constant;
+    feedforward_velocity_filters_.assign(info_.joints.size(), FirstOrderLowPass {});
+    feedforward_acceleration_filters_.assign(info_.joints.size(), FirstOrderLowPass {});
+
     try {
         RCLCPP_INFO(getLogger(), "Connecting to robot %s ...", robot_sn.c_str());
         robot_ = std::make_unique<flexiv::rdk::Robot>(robot_sn);
@@ -702,6 +750,7 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_activate(
             robot_->Stop();
         }
         claimed_interfaces_.fill(kInterfaceNone);
+        reset_feedforward_filters();
     } catch (const std::exception& e) {
         RCLCPP_FATAL(getLogger(), "Could not enable robot.");
         RCLCPP_FATAL(getLogger(), e.what());
@@ -720,6 +769,7 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_deactivate(
 
     robot_->Stop();
     claimed_interfaces_.fill(kInterfaceNone);
+    reset_feedforward_filters();
 
     RCLCPP_INFO(getLogger(), "System successfully stopped!");
 
@@ -732,6 +782,7 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_error(
     RCLCPP_ERROR(getLogger(), "Hardware interface entered the error state, stopping the robot");
 
     claimed_interfaces_.fill(kInterfaceNone);
+    reset_feedforward_filters();
 
     if (robot_) {
         try {
@@ -820,7 +871,7 @@ bool FlexivHardwareInterface::is_joint_commanded(uint8_t claim, size_t ros_idx) 
 }
 
 FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
-    uint8_t claim, size_t rdk_idx) const
+    uint8_t claim, size_t rdk_idx, double feedforward_gain)
 {
     const size_t ros_idx = rdk_to_ros_map_[rdk_idx];
     if (claim == kInterfacePosition) {
@@ -831,8 +882,21 @@ FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
         // the position interface has no velocity to track.
         return {hw_states_joint_positions_[ros_idx], hw_commands_joint_velocities_[ros_idx], 0.0};
     }
-    return {hw_commands_joint_positions_[ros_idx], hw_commands_joint_velocities_[ros_idx],
-        hw_commands_joint_accelerations_[ros_idx]};
+    return {hw_commands_joint_positions_[ros_idx],
+        feedforward_velocity_filters_[ros_idx].update(
+            hw_commands_joint_velocities_[ros_idx], feedforward_gain),
+        feedforward_acceleration_filters_[ros_idx].update(
+            hw_commands_joint_accelerations_[ros_idx], feedforward_gain)};
+}
+
+void FlexivHardwareInterface::reset_feedforward_filters()
+{
+    for (auto& filter : feedforward_velocity_filters_) {
+        filter.reset();
+    }
+    for (auto& filter : feedforward_acceleration_filters_) {
+        filter.reset();
+    }
 }
 
 void FlexivHardwareInterface::on_not_operational()
@@ -913,7 +977,7 @@ hardware_interface::return_type FlexivHardwareInterface::read(
 }
 
 hardware_interface::return_type FlexivHardwareInterface::write(
-    const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/)
+    const rclcpp::Time& /*time*/, const rclcpp::Duration& period)
 {
     // Returning ERROR here would finalize the component, and read() would stop reporting state.
     if (!robot_->operational()) {
@@ -974,6 +1038,9 @@ hardware_interface::return_type FlexivHardwareInterface::write(
     auto& target_acc = target_acc_buffer_;
     auto& target_torque = target_torque_buffer_;
 
+    const double feedforward_gain
+        = FirstOrderLowPass::gain(feedforward_time_constant_, period.seconds());
+
     bool targets_valid = true;
     size_t offset = 0;
     for (size_t g = 0; required_mode != flexiv::rdk::Mode::UNKNOWN && g < active_groups_.size();
@@ -1008,7 +1075,7 @@ hardware_interface::return_type FlexivHardwareInterface::write(
 
         if (commanded) {
             for (size_t k = 0; k < group_dof; ++k) {
-                const JointTarget target = commanded_target(claim, offset + k);
+                const JointTarget target = commanded_target(claim, offset + k, feedforward_gain);
                 target_pos[offset + k] = target.position;
                 target_vel[offset + k] = target.velocity;
                 target_acc[offset + k] = target.acceleration;
@@ -1213,6 +1280,8 @@ hardware_interface::return_type FlexivHardwareInterface::perform_command_mode_sw
                 hw_commands_joint_accelerations_[ros_idx]
                     = std::numeric_limits<double>::quiet_NaN();
                 hw_commands_joint_efforts_[ros_idx] = std::numeric_limits<double>::quiet_NaN();
+                feedforward_velocity_filters_[ros_idx].reset();
+                feedforward_acceleration_filters_[ros_idx].reset();
             }
         }
         offset += active_groups_[g].second;

@@ -35,6 +35,7 @@
 #include "flexiv/rdk/robot.hpp"
 
 #include "flexiv_hardware/command_interface_claims.hpp"
+#include "flexiv_hardware/first_order_low_pass.hpp"
 
 namespace flexiv_hardware {
 
@@ -114,6 +115,13 @@ private:
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RtJointPositionCmd> rt_joint_position_cmds_;
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RtJointTorqueCmd> rt_joint_torque_cmds_;
 
+    /** Low-pass time constant [s] on a trajectory claim's feedforward; hardware parameter
+     * `feedforward_time_constant`, 0 disables it. */
+    static constexpr double kDefaultFeedforwardTimeConstant = 0.02;
+    double feedforward_time_constant_ {kDefaultFeedforwardTimeConstant};
+    std::vector<FirstOrderLowPass> feedforward_velocity_filters_;
+    std::vector<FirstOrderLowPass> feedforward_acceleration_filters_;
+
     // Robot states exported per active joint group.
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RobotStates> hw_flexiv_robot_states_by_group_;
     std::map<flexiv::rdk::JointGroup, double> hw_flexiv_robot_state_handles_by_group_;
@@ -180,8 +188,11 @@ private:
     };
 
     /** Target of RDK joint `rdk_idx` from the commands of its group's position, velocity or
-     * trajectory `claim`. */
-    JointTarget commanded_target(uint8_t claim, size_t rdk_idx) const;
+     * trajectory `claim`, advancing the joint's feedforward filters. */
+    JointTarget commanded_target(uint8_t claim, size_t rdk_idx, double feedforward_gain);
+
+    /** Drop every feedforward filter's state, so the next command seeds it. */
+    void reset_feedforward_filters();
 
     /** Handle a write() cycle whose commands are skipped because the robot is not operational,
      * e.g. E-stopped: log it, and drop the hold targets so they re-seed from the measured position
