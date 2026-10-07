@@ -141,6 +141,11 @@ private:
     // rest. NaN until the first attempt.
     std::vector<PayloadValues> requested_payloads_;
 
+    // Payload the robot reports per arm, exported as `<arm prefix>payload` state interfaces.
+    // Refreshed on activation and after each apply attempt, not continuously (reading tool
+    // parameters is a blocking RDK call); NaN until the first read-back.
+    std::vector<PayloadValues> hw_states_payloads_;
+
     // GPIO commands and states
     std::vector<double> hw_commands_gpio_out_;
     std::vector<double> hw_states_gpio_in_;
@@ -224,9 +229,11 @@ private:
      */
     hardware_interface::return_type apply_pending_payloads(flexiv::rdk::Mode required_mode);
 
-    /** Log the active tool and payload parameters the robot reports for `group`, so a set
-     * payload is confirmed against what the Flexiv controller actually registered. */
-    void log_reported_payload(flexiv::rdk::JointGroup group, const std::string& group_name);
+    /** Read back the active tool and payload parameters the robot reports for `group` into
+     * hw_states_payloads_[arm_idx], and log them, so a set payload is confirmed against what
+     * the Flexiv controller actually registered. */
+    void read_back_payload(
+        flexiv::rdk::JointGroup group, const std::string& group_name, size_t arm_idx);
 
     /**
      * Resolve which joint groups a set of command interface names fully claims, and with which

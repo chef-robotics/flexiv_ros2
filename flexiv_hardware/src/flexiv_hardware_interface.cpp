@@ -188,7 +188,11 @@ void set_arm_payload(flexiv::rdk::Tool& tool, flexiv::rdk::JointGroup group,
     } else {
         tool.Add(name, params);
     }
-    tool.Switch(group, name);
+    // An Update takes effect immediately (RDK v2.1 Tool docs), so an already-active tool
+    // needs no Switch.
+    if (tool.name(group) != name) {
+        tool.Switch(group, name);
+    }
 }
 
 /** Interface a joint group ends up claimed with, given what a mode switch starts and stops. */
@@ -321,6 +325,7 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
     unset_payload.fill(std::numeric_limits<double>::quiet_NaN());
     hw_commands_payloads_.assign(arm_prefixes_.size(), unset_payload);
     requested_payloads_.assign(arm_prefixes_.size(), unset_payload);
+    hw_states_payloads_.assign(arm_prefixes_.size(), unset_payload);
 
     // Build RDK to ROS joint mapping
     std::vector<size_t> arm_indices;
@@ -611,6 +616,14 @@ std::vector<hardware_interface::StateInterface> FlexivHardwareInterface::export_
     state_interfaces.emplace_back(hardware_interface::StateInterface(
         health_interface_name, "estop_released", &hw_states_estop_released_));
 
+    for (size_t i = 0; i < arm_prefixes_.size(); ++i) {
+        const std::string payload_interface_name = arm_prefixes_[i] + "payload";
+        for (size_t k = 0; k < kPayloadInterfaceNames.size(); ++k) {
+            state_interfaces.emplace_back(hardware_interface::StateInterface(
+                payload_interface_name, kPayloadInterfaceNames[k], &hw_states_payloads_[i][k]));
+        }
+    }
+
     return state_interfaces;
 }
 
@@ -759,6 +772,12 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_activate(
         // Resend every commanded payload: the robot's tools may have been edited meanwhile.
         for (auto& requested : requested_payloads_) {
             requested.fill(std::numeric_limits<double>::quiet_NaN());
+        }
+        // Export the payload each arm starts with, before any command arrives.
+        const size_t first_arm_group = active_groups_.size() - arm_prefixes_.size();
+        for (size_t i = 0; i < arm_prefixes_.size(); ++i) {
+            const auto group = active_groups_[first_arm_group + i].first;
+            read_back_payload(group, joint_group_name_string(group), i);
         }
     } catch (const std::exception& e) {
         RCLCPP_FATAL(getLogger(), "Could not enable robot.");
@@ -1378,12 +1397,15 @@ void FlexivHardwareInterface::update_rest_start(const rclcpp::Time& time)
     }
 }
 
-void FlexivHardwareInterface::log_reported_payload(
-    flexiv::rdk::JointGroup group, const std::string& group_name)
+void FlexivHardwareInterface::read_back_payload(
+    flexiv::rdk::JointGroup group, const std::string& group_name, size_t arm_idx)
 {
     try {
         const auto active_tool = tool_->name(group);
         const auto reported = tool_->params(group);
+        hw_states_payloads_[arm_idx] = {reported.mass, reported.CoM[0], reported.CoM[1],
+            reported.CoM[2], reported.inertia[0], reported.inertia[1], reported.inertia[2],
+            reported.inertia[3], reported.inertia[4], reported.inertia[5]};
         RCLCPP_INFO(getLogger(),
             "Robot reports %s active tool '%s': %.3f kg, CoM [%.4f, %.4f, %.4f] m, inertia "
             "[%.5f, %.5f, %.5f, %.5f, %.5f, %.5f] kg*m^2",
@@ -1420,14 +1442,15 @@ hardware_interface::return_type FlexivHardwareInterface::apply_pending_payloads(
         const auto group_name = joint_group_name_string(group);
         try {
             set_arm_payload(*tool_, group, payload);
+            RCLCPP_INFO(getLogger(), "Set the %s payload: %.3f kg, CoM [%.4f, %.4f, %.4f] m",
+                group_name.c_str(), payload[0], payload[1], payload[2], payload[3]);
         } catch (const std::exception& e) {
             RCLCPP_ERROR(
                 getLogger(), "Failed to set the %s payload: %s", group_name.c_str(), e.what());
-            continue;
         }
-        RCLCPP_INFO(getLogger(), "Set the %s payload: %.3f kg, CoM [%.4f, %.4f, %.4f] m",
-            group_name.c_str(), payload[0], payload[1], payload[2], payload[3]);
-        log_reported_payload(group, group_name);
+        // Read back even a rejected set: the state interfaces then show the payload the robot
+        // kept, so the mismatch against the command is visible downstream.
+        read_back_payload(group, group_name, i);
     }
 
     // Stop() invalidated the held targets; the seeding in write() re-reads the measured position.

@@ -88,14 +88,23 @@ They are exported from code, not declared in `flexiv_description`, so
 `mock_components/GenericSystem` does not have them.
 
 A payload is an RDK tool, applied as `chef_payload_ARM_<n>`: `Tool::Add` or
-`Update`, then `Switch`. The arm's active TCP is carried over, so only the
-mass properties change. Every `Tool` call requires IDLE, and the control
-mode is robot-wide, so an update stops **both** arms. `write()` does it only
-once the robot has reported every group stopped, with no position command
-changing, for `kPayloadRestSettleTimeSec`: `Stop()`, set each changed arm,
-`SwitchMode()` back. A command that has not changed since it was last sent is
-never resent, even if the robot rejected it; after `on_activate()` every
-commanded payload is sent again.
+`Update`, then `Switch` unless that tool is already active (an `Update`
+takes effect immediately, per the RDK v2.1 `Tool` docs). The arm's active
+TCP is carried over, so only the mass properties change. Every `Tool` call
+requires IDLE, and the control mode is robot-wide, so an update stops
+**both** arms. The hardware interface owns that stop: a caller only writes
+the command interfaces and never requests IDLE itself.
+`write()` applies a payload only once the robot has reported every group
+stopped, with no position command changing, for `kPayloadRestSettleTimeSec`:
+`Stop()`, set each changed arm, `SwitchMode()` back. A command that has not
+changed since it was last sent is never resent, even if the robot rejected
+it; after `on_activate()` every commanded payload is sent again.
+
+Matching `<arm prefix>payload` **state** interfaces export the payload the
+robot reports: read back on activation and after every apply attempt
+(including a rejected one, which leaves the previous payload visible),
+not continuously, since reading tool parameters is a blocking RDK call.
+A caller confirms a set payload by comparing them to what it commanded.
 
 The update blocks the control loop. A trajectory whose start stamp passes
 during it would be sampled part-way through, so after resuming, a position
@@ -108,9 +117,8 @@ control-mode-loss section). For `kPayloadResumeGraceCycles` after a payload
 update's `SwitchMode()` a failed stream does not count toward that bound,
 in case the robot is not yet accepting streams.
 
-Unverified on hardware: how long the stop/update/resume takes, whether streams
-fail straight after it, and whether `Tool::Update` on the arm's active tool
-takes effect without the `Switch`.
+Unverified on hardware: how long the stop/update/resume takes, and whether
+streams fail straight after it.
 
 ## Why not the consolidated `humble` line
 
