@@ -188,8 +188,10 @@ private:
     };
 
     /** Target of RDK joint `rdk_idx` from the commands of its group's position, velocity or
-     * trajectory `claim`, advancing the joint's feedforward filters. */
-    JointTarget commanded_target(uint8_t claim, size_t rdk_idx, double feedforward_gain);
+     * trajectory `claim`, advancing the joint's feedforward filters with no feedforward input
+     * while the group `is_holding`. */
+    JointTarget commanded_target(
+        uint8_t claim, size_t rdk_idx, bool is_holding, double feedforward_gain);
 
     /** Drop every feedforward filter's state, so the next command seeds it. */
     void reset_feedforward_filters();
