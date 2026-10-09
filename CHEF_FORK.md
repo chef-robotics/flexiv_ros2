@@ -66,6 +66,12 @@ Constraints worth knowing before designing against it:
   robot moves its own target with what it is sent: on eureka, a 3 deg
   position-error fault and a CAT0 overspeed. Clamping is logged at most once
   a second; count clamped cycles from `target_acceleration` instead.
+- On activation the RDK's transport threads (`tx-N`, `rx-N`, `net-N`) are put on
+  SCHED_FIFO at the `rdk_thread_priority` hardware parameter (default 49, 0
+  leaves them alone), just below the controller manager's update loop at 50.
+  On the default policy they lose the CPU to the rest of the host under load,
+  which the robot reports as `StreamJointPosition` timeliness failures. The
+  process needs an RT priority rlimit (the compose files set `rtprio: 99`).
 - Every joint exports `target_position`, `target_velocity` and
   `target_acceleration` state interfaces: the `q_d`, `dq_d` and `ddq_d` last
   prepared for the robot, after the feedforward filter and clamp. They are
