@@ -117,6 +117,19 @@ std::string describe_group_layout(
     return stream.str();
 }
 
+// True if every joint in the group is commanded the same position it was streamed last cycle.
+bool are_group_targets_unchanged(const std::vector<double>& position_commands,
+    const std::vector<double>& targets, const std::vector<size_t>& rdk_to_ros_map, size_t offset,
+    size_t group_dof)
+{
+    for (size_t k = 0; k < group_dof; ++k) {
+        if (position_commands[rdk_to_ros_map[offset + k]] != targets[offset + k]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /**
  * Resolve active joint groups from Robot::states() for this interface.
  *
@@ -871,7 +884,7 @@ bool FlexivHardwareInterface::is_joint_commanded(uint8_t claim, size_t ros_idx) 
 }
 
 FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
-    uint8_t claim, size_t rdk_idx, double feedforward_gain)
+    uint8_t claim, size_t rdk_idx, bool is_holding, double feedforward_gain)
 {
     const size_t ros_idx = rdk_to_ros_map_[rdk_idx];
     if (claim == kInterfacePosition) {
@@ -884,9 +897,9 @@ FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
     }
     return {hw_commands_joint_positions_[ros_idx],
         feedforward_velocity_filters_[ros_idx].update(
-            hw_commands_joint_velocities_[ros_idx], feedforward_gain),
+            is_holding ? 0.0 : hw_commands_joint_velocities_[ros_idx], feedforward_gain),
         feedforward_acceleration_filters_[ros_idx].update(
-            hw_commands_joint_accelerations_[ros_idx], feedforward_gain)};
+            is_holding ? 0.0 : hw_commands_joint_accelerations_[ros_idx], feedforward_gain)};
 }
 
 void FlexivHardwareInterface::reset_feedforward_filters()
@@ -1074,8 +1087,13 @@ hardware_interface::return_type FlexivHardwareInterface::write(
         }
 
         if (commanded) {
+            // After a trajectory ends the JTC keeps commanding its last point's acceleration.
+            const bool is_holding = claim == kInterfaceTrajectory
+                                    && are_group_targets_unchanged(hw_commands_joint_positions_,
+                                        target_pos, rdk_to_ros_map_, offset, group_dof);
             for (size_t k = 0; k < group_dof; ++k) {
-                const JointTarget target = commanded_target(claim, offset + k, feedforward_gain);
+                const JointTarget target
+                    = commanded_target(claim, offset + k, is_holding, feedforward_gain);
                 target_pos[offset + k] = target.position;
                 target_vel[offset + k] = target.velocity;
                 target_acc[offset + k] = target.acceleration;
