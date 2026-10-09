@@ -127,6 +127,13 @@ private:
     std::vector<FirstOrderLowPass> feedforward_velocity_filters_;
     std::vector<FirstOrderLowPass> feedforward_acceleration_filters_;
 
+    /** Default for the hardware parameter `feedforward_max_acceleration` [rad/s^2]. */
+    static constexpr double kDefaultFeedforwardMaxAcceleration = 15.0;
+    // Per-joint bounds on a trajectory claim's feedforward, in RDK order: the robot's dq_max
+    // [rad/s] and `feedforward_max_acceleration` [rad/s^2].
+    std::vector<double> feedforward_velocity_limits_;
+    std::vector<double> feedforward_acceleration_limits_;
+
     // Robot states exported per active joint group.
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RobotStates> hw_flexiv_robot_states_by_group_;
     std::map<flexiv::rdk::JointGroup, double> hw_flexiv_robot_state_handles_by_group_;
@@ -197,6 +204,16 @@ private:
      * while the group `is_holding`. */
     JointTarget commanded_target(
         uint8_t claim, size_t rdk_idx, bool is_holding, double feedforward_gain);
+
+    /**
+     * Clamp the feedforward of a joint target to the robot's limits, logging when it clamps.
+     * @param[in] rdk_idx RDK index of the joint, selecting its limits.
+     * @param[in] target The joint's target, with the feedforward to clamp.
+     * @return `target` with its velocity and acceleration clamped to the joint's
+     *         feedforward_velocity_limits_ and feedforward_acceleration_limits_; the position is
+     *         unchanged.
+     */
+    JointTarget clamp_feedforward(size_t rdk_idx, const JointTarget& target);
 
     /** Drop every feedforward filter's state, so the next command seeds it. */
     void reset_feedforward_filters();
