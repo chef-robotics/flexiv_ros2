@@ -34,6 +34,8 @@
 // Flexiv
 #include "flexiv/rdk/robot.hpp"
 
+#include "flexiv_hardware/command_interface_claims.hpp"
+
 namespace flexiv_hardware {
 
 enum StoppingInterface
@@ -49,18 +51,6 @@ enum StoppingInterface
  * axis group plus up to two single arms (EXT_AXIS, ARM_1, ARM_2).
  */
 constexpr size_t kMaxJointGroups = 3;
-
-/**
- * ROS 2 command interface types that this hardware interface can claim and drive.
- * kInterfaceNone means the group is unclaimed.
- */
-enum CommandInterfaceType : uint8_t
-{
-    kInterfaceNone = 0,
-    kInterfacePosition,
-    kInterfaceVelocity,
-    kInterfaceEffort,
-};
 
 class FlexivHardwareInterface : public hardware_interface::SystemInterface
 {
