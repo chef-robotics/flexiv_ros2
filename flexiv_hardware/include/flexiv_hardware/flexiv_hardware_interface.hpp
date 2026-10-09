@@ -134,6 +134,11 @@ private:
     std::vector<double> feedforward_velocity_limits_;
     std::vector<double> feedforward_acceleration_limits_;
 
+    /** SCHED_FIFO priority of the RDK's transport threads; hardware parameter
+     * `rdk_thread_priority`, 0 leaves them on the default policy. */
+    static constexpr int kDefaultRdkThreadPriority = 49;
+    int rdk_thread_priority_ {kDefaultRdkThreadPriority};
+
     // Robot states exported per active joint group.
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RobotStates> hw_flexiv_robot_states_by_group_;
     std::map<flexiv::rdk::JointGroup, double> hw_flexiv_robot_state_handles_by_group_;
@@ -217,6 +222,9 @@ private:
 
     /** Drop every feedforward filter's state, so the next command seeds it. */
     void reset_feedforward_filters();
+
+    /** Put the RDK's transport threads on SCHED_FIFO at rdk_thread_priority_, unless it is 0. */
+    void apply_rdk_thread_priority();
 
     /** Handle a write() cycle whose commands are skipped because the robot is not operational,
      * e.g. E-stopped: log it, and drop the hold targets so they re-seed from the measured position

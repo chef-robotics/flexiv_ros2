@@ -7,7 +7,12 @@
  */
 
 #include <atomic>
+#include <cctype>
+#include <cerrno>
 #include <cmath>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -19,6 +24,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
+
+#include <sched.h>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/clock.hpp>
@@ -34,6 +41,48 @@ namespace {
 constexpr uint64_t kMaxExactRobotStatesHandle = 1ULL << 53;
 
 using GroupDofList = std::vector<std::pair<flexiv::rdk::JointGroup, size_t>>;
+
+// True for the RDK's transport threads, named `tx-N`, `rx-N` or `net-N`.
+bool is_rdk_transport_thread(const std::string& name)
+{
+    for (const std::string prefix : {"tx-", "rx-", "net-"}) {
+        if (name.size() > prefix.size() && name.compare(0, prefix.size(), prefix) == 0
+            && std::all_of(name.begin() + prefix.size(), name.end(),
+                [](unsigned char c) { return std::isdigit(c) != 0; })) {
+            return true;
+        }
+    }
+    return false;
+}
+
+struct ThreadPrioritization
+{
+    size_t count = 0;
+    /** The first failure, if any. */
+    std::string error;
+};
+
+/** Put this process's RDK transport threads on SCHED_FIFO at `priority`. */
+ThreadPrioritization prioritize_rdk_threads(int priority)
+{
+    ThreadPrioritization result;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc/self/task")) {
+        std::ifstream comm(entry.path() / "comm");
+        std::string name;
+        if (!std::getline(comm, name) || !is_rdk_transport_thread(name)) {
+            continue;
+        }
+        sched_param param {};
+        param.sched_priority = priority;
+        if (sched_setscheduler(std::stoi(entry.path().filename().string()), SCHED_FIFO, &param)
+            == 0) {
+            ++result.count;
+        } else if (result.error.empty()) {
+            result.error = name + ": " + std::strerror(errno);
+        }
+    }
+    return result;
+}
 
 std::atomic<uint64_t> g_next_robot_states_handle {1};
 std::mutex g_robot_states_handle_mutex;
@@ -541,6 +590,13 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
     if (!feedforward_max_acceleration) {
         return hardware_interface::CallbackReturn::ERROR;
     }
+    const auto rdk_thread_priority = parse_optional_parameter(getLogger(), info_,
+        "rdk_thread_priority", "an integer in [0, 99]", kDefaultRdkThreadPriority,
+        [](int value) { return value >= 0 && value <= 99; });
+    if (!rdk_thread_priority) {
+        return hardware_interface::CallbackReturn::ERROR;
+    }
+    rdk_thread_priority_ = *rdk_thread_priority;
     feedforward_velocity_filters_.assign(info_.joints.size(), FirstOrderLowPass {});
     feedforward_acceleration_filters_.assign(info_.joints.size(), FirstOrderLowPass {});
     feedforward_velocity_limits_.assign(
@@ -798,6 +854,8 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_activate(
         return hardware_interface::CallbackReturn::ERROR;
     }
 
+    apply_rdk_thread_priority();
+
     RCLCPP_INFO(getLogger(), "System successfully started!");
 
     return hardware_interface::CallbackReturn::SUCCESS;
@@ -956,6 +1014,26 @@ void FlexivHardwareInterface::reset_feedforward_filters()
     for (auto& filter : feedforward_acceleration_filters_) {
         filter.reset();
     }
+}
+
+void FlexivHardwareInterface::apply_rdk_thread_priority()
+{
+    if (rdk_thread_priority_ == 0) {
+        return;
+    }
+    ThreadPrioritization result;
+    try {
+        result = prioritize_rdk_threads(rdk_thread_priority_);
+    } catch (const std::exception& e) {
+        result.error = e.what();
+    }
+    if (result.error.empty()) {
+        RCLCPP_INFO(getLogger(), "Set %zu RDK transport threads to SCHED_FIFO %d", result.count,
+            rdk_thread_priority_);
+        return;
+    }
+    RCLCPP_WARN(getLogger(), "Set %zu RDK transport threads to SCHED_FIFO %d; failed for %s",
+        result.count, rdk_thread_priority_, result.error.c_str());
 }
 
 void FlexivHardwareInterface::on_not_operational()
