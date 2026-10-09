@@ -106,6 +106,11 @@ private:
     std::vector<double> hw_states_joint_velocities_;
     std::vector<double> hw_states_joint_efforts_;
 
+    // The q_d, dq_d and ddq_d last prepared for the robot, exported as state interfaces.
+    std::vector<double> hw_states_target_positions_;
+    std::vector<double> hw_states_target_velocities_;
+    std::vector<double> hw_states_target_accelerations_;
+
     // Reused write-loop buffers to avoid per-cycle allocations.
     std::vector<double> target_pos_buffer_;
     std::vector<double> target_vel_buffer_;

@@ -271,6 +271,12 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
     hw_states_joint_velocities_.resize(
         info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
     hw_states_joint_efforts_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
+    hw_states_target_positions_.resize(
+        info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
+    hw_states_target_velocities_.resize(
+        info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
+    hw_states_target_accelerations_.resize(
+        info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
     hw_commands_joint_positions_.resize(
         info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
     hw_commands_joint_velocities_.resize(
@@ -562,6 +568,12 @@ std::vector<hardware_interface::StateInterface> FlexivHardwareInterface::export_
             hardware_interface::HW_IF_VELOCITY, &hw_states_joint_velocities_[i]));
         state_interfaces.emplace_back(hardware_interface::StateInterface(
             info_.joints[i].name, hardware_interface::HW_IF_EFFORT, &hw_states_joint_efforts_[i]));
+        state_interfaces.emplace_back(hardware_interface::StateInterface(
+            info_.joints[i].name, "target_position", &hw_states_target_positions_[i]));
+        state_interfaces.emplace_back(hardware_interface::StateInterface(
+            info_.joints[i].name, "target_velocity", &hw_states_target_velocities_[i]));
+        state_interfaces.emplace_back(hardware_interface::StateInterface(
+            info_.joints[i].name, "target_acceleration", &hw_states_target_accelerations_[i]));
     }
 
     for (const auto& [group, encoded_handle] : hw_flexiv_robot_state_handles_by_group_) {
@@ -1119,6 +1131,12 @@ hardware_interface::return_type FlexivHardwareInterface::write(
         std::copy_n(target_pos.begin() + begin, group_dof, cmd.q_d.begin());
         std::copy_n(target_vel.begin() + begin, group_dof, cmd.dq_d.begin());
         std::copy_n(target_acc.begin() + begin, group_dof, cmd.ddq_d.begin());
+        for (size_t k = 0; k < group_dof; ++k) {
+            const size_t ros_idx = rdk_to_ros_map_[offset + k];
+            hw_states_target_positions_[ros_idx] = target_pos[offset + k];
+            hw_states_target_velocities_[ros_idx] = target_vel[offset + k];
+            hw_states_target_accelerations_[ros_idx] = target_acc[offset + k];
+        }
         offset += group_dof;
     }
 

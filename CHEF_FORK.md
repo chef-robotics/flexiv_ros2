@@ -58,6 +58,12 @@ Constraints worth knowing before designing against it:
   holding, and its feedforward input is zero. The JTC keeps commanding its
   last point after a trajectory ends, acceleration included; streamed at rest,
   that would hold the arm off target in proportion to the final deceleration.
+- Every joint exports `target_position`, `target_velocity` and
+  `target_acceleration` state interfaces: the `q_d`, `dq_d` and `ddq_d` last
+  prepared for the robot, after the feedforward filter. They are recorded
+  before the stream call, so a cycle whose stream fails still updates them. A
+  joint state broadcaster listing them publishes them on `dynamic_joint_states`
+  at the update rate.
 - The RDK control mode is **global**: position on one arm and velocity on the
   other is fine, but not position on one and effort on the other. Effort
   requires every group claimed, or the unclaimed arm free-floats.
