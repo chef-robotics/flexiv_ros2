@@ -534,8 +534,18 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
         return hardware_interface::CallbackReturn::ERROR;
     }
     feedforward_time_constant_ = *feedforward_time_constant;
+    const auto feedforward_max_acceleration
+        = parse_optional_parameter(getLogger(), info_, "feedforward_max_acceleration",
+            "a positive number of rad/s^2", kDefaultFeedforwardMaxAcceleration,
+            [](double value) { return std::isfinite(value) && value > 0.0; });
+    if (!feedforward_max_acceleration) {
+        return hardware_interface::CallbackReturn::ERROR;
+    }
     feedforward_velocity_filters_.assign(info_.joints.size(), FirstOrderLowPass {});
     feedforward_acceleration_filters_.assign(info_.joints.size(), FirstOrderLowPass {});
+    feedforward_velocity_limits_.assign(
+        info_.joints.size(), std::numeric_limits<double>::infinity());
+    feedforward_acceleration_limits_.assign(info_.joints.size(), *feedforward_max_acceleration);
 
     try {
         RCLCPP_INFO(getLogger(), "Connecting to robot %s ...", robot_sn.c_str());
@@ -753,6 +763,12 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_activate(
             RCLCPP_INFO(getLogger(), "Joint group %s drives %zu joints, starting at '%s'",
                 joint_group_name_string(active_groups_[g].first).c_str(), active_groups_[g].second,
                 info_.joints[rdk_to_ros_map_[group_offset]].name.c_str());
+            if (const auto it = robot_info.dq_max.find(active_groups_[g].first);
+                it != robot_info.dq_max.end()) {
+                std::copy_n(it->second.begin(),
+                    std::min(active_groups_[g].second, it->second.size()),
+                    feedforward_velocity_limits_.begin() + group_offset);
+            }
             group_offset += active_groups_[g].second;
         }
 
@@ -907,11 +923,29 @@ FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
         // the position interface has no velocity to track.
         return {hw_states_joint_positions_[ros_idx], hw_commands_joint_velocities_[ros_idx], 0.0};
     }
-    return {hw_commands_joint_positions_[ros_idx],
-        feedforward_velocity_filters_[ros_idx].update(
-            is_holding ? 0.0 : hw_commands_joint_velocities_[ros_idx], feedforward_gain),
-        feedforward_acceleration_filters_[ros_idx].update(
-            is_holding ? 0.0 : hw_commands_joint_accelerations_[ros_idx], feedforward_gain)};
+    return clamp_feedforward(rdk_idx,
+        {hw_commands_joint_positions_[ros_idx],
+            feedforward_velocity_filters_[ros_idx].update(
+                is_holding ? 0.0 : hw_commands_joint_velocities_[ros_idx], feedforward_gain),
+            feedforward_acceleration_filters_[ros_idx].update(
+                is_holding ? 0.0 : hw_commands_joint_accelerations_[ros_idx], feedforward_gain)});
+}
+
+FlexivHardwareInterface::JointTarget FlexivHardwareInterface::clamp_feedforward(
+    size_t rdk_idx, const JointTarget& target)
+{
+    const double velocity_limit = feedforward_velocity_limits_[rdk_idx];
+    const double acceleration_limit = feedforward_acceleration_limits_[rdk_idx];
+    const JointTarget clamped {target.position,
+        std::clamp(target.velocity, -velocity_limit, velocity_limit),
+        std::clamp(target.acceleration, -acceleration_limit, acceleration_limit)};
+    if (clamped.velocity == target.velocity && clamped.acceleration == target.acceleration) {
+        return clamped;
+    }
+    RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
+        "Clamped feedforward on '%s': velocity %.3f rad/s, acceleration %.1f rad/s^2",
+        info_.joints[rdk_to_ros_map_[rdk_idx]].name.c_str(), target.velocity, target.acceleration);
+    return clamped;
 }
 
 void FlexivHardwareInterface::reset_feedforward_filters()

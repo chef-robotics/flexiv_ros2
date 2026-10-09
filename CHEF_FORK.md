@@ -58,12 +58,20 @@ Constraints worth knowing before designing against it:
   holding, and its feedforward input is zero. The JTC keeps commanding its
   last point after a trajectory ends, acceleration included; streamed at rest,
   that would hold the arm off target in proportion to the final deceleration.
+- The streamed feedforward is clamped after the filter: `dq_d` to the robot's
+  own `dq_max` per joint, `ddq_d` to the `feedforward_max_acceleration`
+  hardware parameter (rad/s^2, default 15). The position target is not
+  touched. A trajectory join that snaps (e.g. a null-space jump at a
+  replacement) makes the JTC spline ask for thousands of rad/s^2, and the
+  robot moves its own target with what it is sent: on eureka, a 3 deg
+  position-error fault and a CAT0 overspeed. Clamping is logged at most once
+  a second; count clamped cycles from `target_acceleration` instead.
 - Every joint exports `target_position`, `target_velocity` and
   `target_acceleration` state interfaces: the `q_d`, `dq_d` and `ddq_d` last
-  prepared for the robot, after the feedforward filter. They are recorded
-  before the stream call, so a cycle whose stream fails still updates them. A
-  joint state broadcaster listing them publishes them on `dynamic_joint_states`
-  at the update rate.
+  prepared for the robot, after the feedforward filter and clamp. They are
+  recorded before the stream call, so a cycle whose stream fails still updates
+  them. A joint state broadcaster listing them publishes them on
+  `dynamic_joint_states` at the update rate.
 - The RDK control mode is **global**: position on one arm and velocity on the
   other is fine, but not position on one and effort on the other. Effort
   requires every group claimed, or the unclaimed arm free-floats.
