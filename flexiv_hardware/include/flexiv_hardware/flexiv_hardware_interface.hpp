@@ -97,6 +97,7 @@ private:
     // Joint commands
     std::vector<double> hw_commands_joint_positions_;
     std::vector<double> hw_commands_joint_velocities_;
+    std::vector<double> hw_commands_joint_accelerations_;
     std::vector<double> hw_commands_joint_efforts_;
 
     // Joint states
@@ -107,6 +108,7 @@ private:
     // Reused write-loop buffers to avoid per-cycle allocations.
     std::vector<double> target_pos_buffer_;
     std::vector<double> target_vel_buffer_;
+    std::vector<double> target_acc_buffer_;
     std::vector<double> target_torque_buffer_;
 
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RtJointPositionCmd> rt_joint_position_cmds_;
@@ -165,6 +167,21 @@ private:
     /** RDK control mode implied by the interfaces currently claimed on each joint group.
      * Mode::UNKNOWN when no joint group is claimed at all. */
     flexiv::rdk::Mode required_rdk_mode() const;
+
+    /** Whether joint `ros_idx` has every command its group's `claim` drives it with. */
+    bool is_joint_commanded(uint8_t claim, size_t ros_idx) const;
+
+    /** The q_d [rad], dq_d [rad/s] and ddq_d [rad/s^2] streamed for one joint. */
+    struct JointTarget
+    {
+        double position;
+        double velocity;
+        double acceleration;
+    };
+
+    /** Target of RDK joint `rdk_idx` from the commands of its group's position, velocity or
+     * trajectory `claim`. */
+    JointTarget commanded_target(uint8_t claim, size_t rdk_idx) const;
 
     /** Handle a write() cycle whose commands are skipped because the robot is not operational,
      * e.g. E-stopped: log it, and drop the hold targets so they re-seed from the measured position

@@ -21,6 +21,8 @@ enum CommandInterfaceType : uint8_t
     kInterfacePosition,
     kInterfaceVelocity,
     kInterfaceEffort,
+    /** Position, velocity and acceleration together; the latter two stream as feedforward. */
+    kInterfaceTrajectory,
 };
 
 /** The command interfaces named for one joint, as a bit set. */
@@ -28,6 +30,7 @@ enum CommandInterfaceBits : uint8_t
 {
     kBitPosition = 1 << 0,
     kBitVelocity = 1 << 1,
+    kBitAcceleration = 1 << 2,
     kBitEffort = 1 << 3,
 };
 
@@ -41,6 +44,8 @@ inline uint8_t claimed_interface_bits(
             bits |= kBitPosition;
         } else if (key == joint_name + "/" + hardware_interface::HW_IF_VELOCITY) {
             bits |= kBitVelocity;
+        } else if (key == joint_name + "/" + hardware_interface::HW_IF_ACCELERATION) {
+            bits |= kBitAcceleration;
         } else if (key == joint_name + "/" + hardware_interface::HW_IF_EFFORT) {
             bits |= kBitEffort;
         }
@@ -61,7 +66,11 @@ inline CommandInterfaceType interface_type_from_bits(uint8_t bits)
             return kInterfaceVelocity;
         case kBitEffort:
             return kInterfaceEffort;
+        case kBitPosition | kBitVelocity | kBitAcceleration:
+            return kInterfaceTrajectory;
         default:
+            // Position with only velocity or acceleration is refused: partial feedforward
+            // overshoots more than none.
             return kInterfaceNone;
     }
 }

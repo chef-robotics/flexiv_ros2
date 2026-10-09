@@ -46,11 +46,39 @@ TEST(InterfaceTypeFromBits, SingleInterfacesAreDriven)
     EXPECT_EQ(interface_type_from_bits(kBitEffort), kInterfaceEffort);
 }
 
+TEST(InterfaceTypeFromBits, PositionVelocityAccelerationIsATrajectoryClaim)
+{
+    EXPECT_EQ(interface_type_from_bits(kBitPosition | kBitVelocity | kBitAcceleration),
+        kInterfaceTrajectory);
+}
+
 TEST(InterfaceTypeFromBits, OtherCombinationsAreNot)
 {
     EXPECT_EQ(interface_type_from_bits(0), kInterfaceNone);
     EXPECT_EQ(interface_type_from_bits(kBitPosition | kBitVelocity), kInterfaceNone);
+    EXPECT_EQ(interface_type_from_bits(kBitPosition | kBitAcceleration), kInterfaceNone);
+    EXPECT_EQ(interface_type_from_bits(kBitAcceleration), kInterfaceNone);
     EXPECT_EQ(interface_type_from_bits(kBitPosition | kBitEffort), kInterfaceNone);
+    EXPECT_EQ(interface_type_from_bits(kBitPosition | kBitVelocity | kBitAcceleration | kBitEffort),
+        kInterfaceNone);
+}
+
+TEST(ResolveGroupClaim, WholeGroupWithTheTrajectoryTriple)
+{
+    const GroupClaim claim = resolve_group_claim(
+        keys_for(kArmJoints, {"position", "velocity", "acceleration"}), kArmJoints);
+    EXPECT_EQ(claim.error, GroupClaimError::kNone);
+    EXPECT_EQ(claim.type, kInterfaceTrajectory);
+    EXPECT_EQ(claim.claimed_joints, kArmJoints.size());
+}
+
+TEST(ResolveGroupClaim, TrajectoryTripleOnSomeJointsOnlyIsPartial)
+{
+    std::vector<std::string> six(kArmJoints.begin(), kArmJoints.end() - 1);
+    const GroupClaim claim
+        = resolve_group_claim(keys_for(six, {"position", "velocity", "acceleration"}), kArmJoints);
+    EXPECT_EQ(claim.error, GroupClaimError::kPartialGroup);
+    EXPECT_EQ(claim.type, kInterfaceTrajectory);
 }
 
 TEST(ResolveGroupClaim, NoKeysLeavesTheGroupUnclaimed)
