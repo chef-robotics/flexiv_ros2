@@ -64,6 +64,8 @@ if(BUILD_TESTING)
   ament_add_gtest(command_interface_claims_test test/command_interface_claims_test.cpp)
   target_include_directories(command_interface_claims_test PRIVATE include)
   ament_target_dependencies(command_interface_claims_test hardware_interface)
+  ament_add_gtest(first_order_low_pass_test test/first_order_low_pass_test.cpp)
+  target_include_directories(first_order_low_pass_test PRIVATE include)
 endif()
 
 # EXPORTS
