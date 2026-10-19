@@ -118,6 +118,8 @@ std::string describe_group_layout(
 }
 
 // True if every joint in the group is commanded the same position it was streamed last cycle.
+// `position_commands` is in ROS joint order (info_.joints) and `targets` in RDK order
+// [ext_axis..., arm...], so joint `offset + k` of the group is looked up through the map.
 bool are_group_targets_unchanged(const std::vector<double>& position_commands,
     const std::vector<double>& targets, const std::vector<size_t>& rdk_to_ros_map, size_t offset,
     size_t group_dof)
