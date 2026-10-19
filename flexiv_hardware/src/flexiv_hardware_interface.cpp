@@ -853,8 +853,9 @@ flexiv::rdk::Mode FlexivHardwareInterface::required_rdk_mode() const
     return effort_groups != 0 ? flexiv::rdk::Mode::RT_JOINT_TORQUE : rdk_control_mode_;
 }
 
-bool FlexivHardwareInterface::is_joint_commanded(uint8_t claim, size_t ros_idx) const
+bool FlexivHardwareInterface::is_joint_commanded(uint8_t claim, size_t rdk_idx) const
 {
+    const size_t ros_idx = rdk_to_ros_map_[rdk_idx];
     switch (claim) {
         case kInterfacePosition:
             return std::isfinite(hw_commands_joint_positions_[ros_idx]);
@@ -1070,7 +1071,7 @@ hardware_interface::return_type FlexivHardwareInterface::write(
         const uint8_t claim = claimed_interfaces_[g];
         bool commanded = true;
         for (size_t k = 0; k < group_dof && commanded; ++k) {
-            commanded = is_joint_commanded(claim, rdk_to_ros_map_[offset + k]);
+            commanded = is_joint_commanded(claim, offset + k);
         }
 
         if (commanded) {

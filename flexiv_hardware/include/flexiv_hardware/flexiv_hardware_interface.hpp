@@ -176,8 +176,8 @@ private:
      * Mode::UNKNOWN when no joint group is claimed at all. */
     flexiv::rdk::Mode required_rdk_mode() const;
 
-    /** Whether joint `ros_idx` has every command its group's `claim` drives it with. */
-    bool is_joint_commanded(uint8_t claim, size_t ros_idx) const;
+    /** Whether RDK joint `rdk_idx` has every command its group's `claim` drives it with. */
+    bool is_joint_commanded(uint8_t claim, size_t rdk_idx) const;
 
     /** The q_d [rad], dq_d [rad/s] and ddq_d [rad/s^2] streamed for one joint. */
     struct JointTarget
