@@ -89,6 +89,9 @@ public:
         const rclcpp::Time& time, const rclcpp::Duration& period) override;
 
 private:
+    /** Default for the hardware parameter `feedforward_time_constant` [s]. */
+    static constexpr double kDefaultFeedforwardTimeConstant = 0.02;
+
     // Flexiv RDK
     std::unique_ptr<flexiv::rdk::Robot> robot_;
 
@@ -117,7 +120,6 @@ private:
 
     /** Low-pass time constant [s] on a trajectory claim's feedforward; hardware parameter
      * `feedforward_time_constant`, 0 disables it. */
-    static constexpr double kDefaultFeedforwardTimeConstant = 0.02;
     double feedforward_time_constant_ {kDefaultFeedforwardTimeConstant};
     std::vector<FirstOrderLowPass> feedforward_velocity_filters_;
     std::vector<FirstOrderLowPass> feedforward_acceleration_filters_;
