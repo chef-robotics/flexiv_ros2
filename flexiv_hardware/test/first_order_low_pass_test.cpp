@@ -1,6 +1,7 @@
 #include "flexiv_hardware/first_order_low_pass.hpp"
 
 #include <cmath>
+#include <limits>
 
 #include <gtest/gtest.h>
 
@@ -76,6 +77,23 @@ TEST(FirstOrderLowPass, ResetReseedsFromTheNextSample)
     filter.update(10.0, 0.5);
     filter.reset();
     EXPECT_DOUBLE_EQ(filter.update(-4.0, 0.5), -4.0);
+}
+
+TEST(FirstOrderLowPass, NonFiniteSampleHoldsTheOutput)
+{
+    FirstOrderLowPass filter;
+    filter.update(2.0, 0.5);
+    EXPECT_DOUBLE_EQ(filter.update(std::nan(""), 0.5), 2.0);
+    EXPECT_DOUBLE_EQ(filter.update(std::numeric_limits<double>::infinity(), 0.5), 2.0);
+    EXPECT_DOUBLE_EQ(filter.update(4.0, 0.5), 3.0);
+}
+
+TEST(FirstOrderLowPass, NonFiniteFirstSampleLeavesTheFilterUnseeded)
+{
+    FirstOrderLowPass filter;
+    EXPECT_DOUBLE_EQ(filter.update(std::nan(""), 0.5), 0.0);
+    EXPECT_DOUBLE_EQ(filter.update(-std::numeric_limits<double>::infinity(), 0.5), 0.0);
+    EXPECT_DOUBLE_EQ(filter.update(1.5, 0.5), 1.5);
 }
 
 } // namespace

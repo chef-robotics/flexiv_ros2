@@ -6,7 +6,7 @@ namespace flexiv_hardware {
 
 double FirstOrderLowPass::gain(double time_constant, double period)
 {
-    // Not `<= 0.0`: NaN compares false, and must pass through rather than poison the state.
+    // Not `<= 0.0`: NaN compares false, and must pass through rather than poison the output.
     if (!(time_constant > 0.0) || !(period > 0.0)) {
         return 1.0;
     }
@@ -15,17 +15,20 @@ double FirstOrderLowPass::gain(double time_constant, double period)
 
 double FirstOrderLowPass::update(double sample, double gain)
 {
-    if (!std::isfinite(state_)) {
-        state_ = sample;
-        return state_;
+    if (!std::isfinite(sample)) {
+        return output_.value_or(0.0);
     }
-    state_ += gain * (sample - state_);
-    return state_;
+    if (!output_) {
+        output_ = sample;
+    } else {
+        *output_ += gain * (sample - *output_);
+    }
+    return *output_;
 }
 
 void FirstOrderLowPass::reset()
 {
-    state_ = std::numeric_limits<double>::quiet_NaN();
+    output_.reset();
 }
 
 } // namespace flexiv_hardware
