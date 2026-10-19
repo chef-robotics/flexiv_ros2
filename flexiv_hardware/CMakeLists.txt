@@ -23,6 +23,7 @@ add_library(
   ${PROJECT_NAME}
   SHARED
   src/flexiv_hardware_interface.cpp
+  src/command_interface_claims.cpp
 )
 
 target_include_directories(
@@ -61,7 +62,8 @@ install(
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   # Pure helpers only: nothing here links the RDK or needs a robot.
-  ament_add_gtest(command_interface_claims_test test/command_interface_claims_test.cpp)
+  ament_add_gtest(command_interface_claims_test
+    test/command_interface_claims_test.cpp src/command_interface_claims.cpp)
   target_include_directories(command_interface_claims_test PRIVATE include)
   ament_target_dependencies(command_interface_claims_test hardware_interface)
 endif()
