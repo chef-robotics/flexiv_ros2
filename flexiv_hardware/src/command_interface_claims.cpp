@@ -13,6 +13,8 @@ uint8_t claimed_interface_bits(
             bits |= kBitPosition;
         } else if (key == joint_name + "/" + hardware_interface::HW_IF_VELOCITY) {
             bits |= kBitVelocity;
+        } else if (key == joint_name + "/" + hardware_interface::HW_IF_ACCELERATION) {
+            bits |= kBitAcceleration;
         } else if (key == joint_name + "/" + hardware_interface::HW_IF_EFFORT) {
             bits |= kBitEffort;
         }
@@ -29,7 +31,11 @@ CommandInterfaceType interface_type_from_bits(uint8_t bits)
             return kInterfaceVelocity;
         case kBitEffort:
             return kInterfaceEffort;
+        case kBitPosition | kBitVelocity | kBitAcceleration:
+            return kInterfaceTrajectory;
         default:
+            // Position with only velocity or acceleration is refused: partial feedforward
+            // overshoots more than none.
             return kInterfaceNone;
     }
 }

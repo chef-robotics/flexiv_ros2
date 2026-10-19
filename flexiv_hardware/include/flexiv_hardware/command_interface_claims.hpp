@@ -19,6 +19,8 @@ enum CommandInterfaceType : uint8_t
     kInterfacePosition,
     kInterfaceVelocity,
     kInterfaceEffort,
+    /** Position, velocity and acceleration together; the latter two stream as feedforward. */
+    kInterfaceTrajectory,
 };
 
 /** The command interfaces named for one joint, as a bit set. */
@@ -26,6 +28,7 @@ enum CommandInterfaceBits : uint8_t
 {
     kBitPosition = 1 << 0,
     kBitVelocity = 1 << 1,
+    kBitAcceleration = 1 << 2,
     kBitEffort = 1 << 3,
 };
 

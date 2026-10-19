@@ -39,8 +39,15 @@ all motion when any joint's command is NaN.
 
 Constraints worth knowing before designing against it:
 
-- An arm must be claimed **whole** (all 7 joints) with a single interface type.
-  6-of-7, or position+velocity on one arm, fails `prepare_command_mode_switch`.
+- An arm must be claimed **whole** (all 7 joints) with a single interface type,
+  or with position, velocity and acceleration together. 6-of-7, or
+  position+velocity on one arm, fails `prepare_command_mode_switch`.
+- A trajectory controller configured with `[position, velocity, acceleration]`
+  gets its velocity and acceleration streamed as `dq_d`/`ddq_d` feedforward.
+  With `[position]` alone both are streamed as zero, which a position loop
+  reads as a target at rest and trails by a speed-proportional lag.
+  `[position, velocity]` is refused rather than half-served: a velocity
+  feedforward without its acceleration overshoots more than none.
 - The RDK control mode is **global**: position on one arm and velocity on the
   other is fine, but not position on one and effort on the other. Effort
   requires every group claimed, or the unclaimed arm free-floats.
