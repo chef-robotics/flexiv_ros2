@@ -91,6 +91,10 @@ public:
 private:
     /** Default for the hardware parameter `feedforward_time_constant` [s]. */
     static constexpr double kDefaultFeedforwardTimeConstant = 0.02;
+    /** Stream failures tolerated before write() errors the hardware component. */
+    static constexpr size_t kMaxConsecutiveStreamFailures = 50;
+    /** Mode-recovery attempts before write() gives up and errors the component. */
+    static constexpr size_t kMaxConsecutiveModeRecoveries = 3;
 
     // Flexiv RDK
     std::unique_ptr<flexiv::rdk::Robot> robot_;
@@ -154,14 +158,8 @@ private:
     /** Reset by the first write() cycle that streams successfully. */
     size_t consecutive_stream_failures_ {0};
 
-    /** Stream failures tolerated before write() errors the hardware component. */
-    static constexpr size_t kMaxConsecutiveStreamFailures = 50;
-
     /** Reset by the first write() cycle that finds the control mode already correct. */
     size_t consecutive_mode_recoveries_ {0};
-
-    /** Mode-recovery attempts before write() gives up and errors the component. */
-    static constexpr size_t kMaxConsecutiveModeRecoveries = 3;
 
     /**
      * Resolve which joint groups a set of command interface names fully claims, and with which
