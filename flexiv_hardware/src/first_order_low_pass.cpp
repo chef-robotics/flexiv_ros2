@@ -7,9 +7,12 @@ namespace flexiv_hardware {
 std::optional<double> FirstOrderLowPass::calculate_discrete_gain(
     double time_constant, double period)
 {
-    // std::isfinite first, so NaN is refused rather than slipping past the comparisons.
-    if (!std::isfinite(time_constant) || time_constant < 0.0 || !std::isfinite(period)
-        || period <= 0.0) {
+    // std::isfinite first in each check, so NaN is refused rather than slipping past the
+    // comparison.
+    if (!std::isfinite(time_constant) || time_constant < 0.0) {
+        return std::nullopt;
+    }
+    if (!std::isfinite(period) || period <= 0.0) {
         return std::nullopt;
     }
     return period / (time_constant + period);
