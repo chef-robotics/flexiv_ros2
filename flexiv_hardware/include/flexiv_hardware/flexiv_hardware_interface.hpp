@@ -91,6 +91,8 @@ public:
 private:
     /** Default for the hardware parameter `feedforward_time_constant` [s]. */
     static constexpr double kDefaultFeedforwardTimeConstant = 0.02;
+    /** Default for the hardware parameter `feedforward_max_acceleration` [rad/s^2]. */
+    static constexpr double kDefaultFeedforwardMaxAcceleration = 15.0;
     /** Stream failures tolerated before write() errors the hardware component. */
     static constexpr size_t kMaxConsecutiveStreamFailures = 50;
     /** Mode-recovery attempts before write() gives up and errors the component. */
@@ -133,8 +135,6 @@ private:
     std::vector<FirstOrderLowPass> feedforward_velocity_filters_;
     std::vector<FirstOrderLowPass> feedforward_acceleration_filters_;
 
-    /** Default for the hardware parameter `feedforward_max_acceleration` [rad/s^2]. */
-    static constexpr double kDefaultFeedforwardMaxAcceleration = 15.0;
     // Per-joint bounds on a trajectory claim's feedforward, in RDK order: the robot's dq_max
     // [rad/s] and `feedforward_max_acceleration` [rad/s^2].
     std::vector<double> feedforward_velocity_limits_;
