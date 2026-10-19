@@ -43,13 +43,13 @@ GroupClaim resolve_group_claim(
         if (bits == 0) {
             continue;
         }
-        const CommandInterfaceType joint_type = interface_type_from_bits(bits);
-        if (joint_type == kInterfaceNone
-            || (claim.type != kInterfaceNone && joint_type != claim.type)) {
+        const CommandInterfaceType interface_type = interface_type_from_bits(bits);
+        if (interface_type == kInterfaceNone
+            || (claim.type != kInterfaceNone && interface_type != claim.type)) {
             claim.error = GroupClaimError::kMixedTypes;
             return claim;
         }
-        claim.type = joint_type;
+        claim.type = interface_type;
         claim.claimed_joints++;
     }
     if (claim.claimed_joints != 0 && claim.claimed_joints != joint_names.size()) {
