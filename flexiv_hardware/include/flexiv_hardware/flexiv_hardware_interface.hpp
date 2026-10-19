@@ -93,6 +93,8 @@ private:
     static constexpr double kDefaultFeedforwardTimeConstant = 0.02;
     /** Default for the hardware parameter `feedforward_max_acceleration` [rad/s^2]. */
     static constexpr double kDefaultFeedforwardMaxAcceleration = 15.0;
+    /** Default for the hardware parameter `rdk_thread_priority`. */
+    static constexpr int kDefaultRdkThreadPriority = 49;
     /** Stream failures tolerated before write() errors the hardware component. */
     static constexpr size_t kMaxConsecutiveStreamFailures = 50;
     /** Mode-recovery attempts before write() gives up and errors the component. */
@@ -142,7 +144,6 @@ private:
 
     /** SCHED_FIFO priority of the RDK's transport threads; hardware parameter
      * `rdk_thread_priority`, 0 leaves them on the default policy. */
-    static constexpr int kDefaultRdkThreadPriority = 49;
     int rdk_thread_priority_ {kDefaultRdkThreadPriority};
 
     // Robot states exported per active joint group.
