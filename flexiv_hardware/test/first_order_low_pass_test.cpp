@@ -1,0 +1,123 @@
+#include "flexiv_hardware/first_order_low_pass.hpp"
+
+#include <cmath>
+#include <limits>
+
+#include <gtest/gtest.h>
+
+namespace flexiv_hardware {
+namespace {
+
+constexpr double kPeriod = 0.001;
+constexpr double kTimeConstant = 0.02;
+
+TEST(FirstOrderLowPassGain, ZeroTimeConstantPassesThrough)
+{
+    EXPECT_DOUBLE_EQ(FirstOrderLowPass::calculate_discrete_gain(0.0, kPeriod).value(), 1.0);
+}
+
+TEST(FirstOrderLowPassGain, FollowsThePeriodOverTimeConstantRatio)
+{
+    EXPECT_DOUBLE_EQ(FirstOrderLowPass::calculate_discrete_gain(kTimeConstant, kPeriod).value(),
+        kPeriod / (kTimeConstant + kPeriod));
+}
+
+TEST(FirstOrderLowPassGain, NonPositiveOrNonFinitePeriodIsRefused)
+{
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    for (const double period : {0.0, -kPeriod, std::nan(""), kInf}) {
+        EXPECT_FALSE(FirstOrderLowPass::calculate_discrete_gain(kTimeConstant, period).has_value())
+            << "period " << period;
+    }
+}
+
+TEST(FirstOrderLowPassGain, NegativeOrNonFiniteTimeConstantIsRefused)
+{
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    for (const double time_constant : {-kTimeConstant, std::nan(""), kInf}) {
+        EXPECT_FALSE(FirstOrderLowPass::calculate_discrete_gain(time_constant, kPeriod).has_value())
+            << "time constant " << time_constant;
+    }
+}
+
+TEST(FirstOrderLowPass, SeedsFromTheFirstSample)
+{
+    FirstOrderLowPass filter;
+    EXPECT_DOUBLE_EQ(filter.update(1.5, 0.1).value(), 1.5);
+}
+
+TEST(FirstOrderLowPass, UnitGainPassesThrough)
+{
+    FirstOrderLowPass filter;
+    filter.update(0.0, 1.0);
+    EXPECT_DOUBLE_EQ(filter.update(2.0, 1.0).value(), 2.0);
+    EXPECT_DOUBLE_EQ(filter.update(-3.0, 1.0).value(), -3.0);
+}
+
+TEST(FirstOrderLowPass, SettlesOnAStepWithinFiveTimeConstants)
+{
+    FirstOrderLowPass filter;
+    const double gain = FirstOrderLowPass::calculate_discrete_gain(kTimeConstant, kPeriod).value();
+    filter.update(0.0, gain);
+    double value = 0.0;
+    const int steps = static_cast<int>(5.0 * kTimeConstant / kPeriod);
+    for (int i = 0; i < steps; ++i) {
+        value = filter.update(1.0, gain).value();
+    }
+    // One time constant in leaves 1/e of the step; five leave under 1%.
+    EXPECT_NEAR(value, 1.0, 0.01);
+    EXPECT_LT(value, 1.0);
+}
+
+TEST(FirstOrderLowPass, OneTimeConstantReachesAboutSixtyThreePercent)
+{
+    FirstOrderLowPass filter;
+    const double gain = FirstOrderLowPass::calculate_discrete_gain(kTimeConstant, kPeriod).value();
+    filter.update(0.0, gain);
+    double value = 0.0;
+    const int steps = static_cast<int>(kTimeConstant / kPeriod);
+    for (int i = 0; i < steps; ++i) {
+        value = filter.update(1.0, gain).value();
+    }
+    EXPECT_NEAR(value, 1.0 - std::exp(-1.0), 0.03);
+}
+
+TEST(FirstOrderLowPass, ResetReseedsFromTheNextSample)
+{
+    FirstOrderLowPass filter;
+    filter.update(0.0, 0.5);
+    filter.update(10.0, 0.5);
+    filter.reset();
+    EXPECT_DOUBLE_EQ(filter.update(-4.0, 0.5).value(), -4.0);
+}
+
+TEST(FirstOrderLowPass, NonFiniteSampleIsRefusedAndLeavesTheOutput)
+{
+    FirstOrderLowPass filter;
+    filter.update(2.0, 0.5);
+    EXPECT_FALSE(filter.update(std::nan(""), 0.5).has_value());
+    EXPECT_FALSE(filter.update(std::numeric_limits<double>::infinity(), 0.5).has_value());
+    EXPECT_DOUBLE_EQ(filter.update(4.0, 0.5).value(), 3.0);
+}
+
+TEST(FirstOrderLowPass, NonFiniteFirstSampleLeavesTheFilterUnseeded)
+{
+    FirstOrderLowPass filter;
+    EXPECT_FALSE(filter.update(std::nan(""), 0.5).has_value());
+    EXPECT_FALSE(filter.update(-std::numeric_limits<double>::infinity(), 0.5).has_value());
+    EXPECT_DOUBLE_EQ(filter.update(1.5, 0.5).value(), 1.5);
+}
+
+TEST(FirstOrderLowPass, GainOutsideZeroToOneIsRefusedAndLeavesTheOutput)
+{
+    FirstOrderLowPass filter;
+    filter.update(2.0, 0.5);
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    for (const double gain : {0.0, -0.5, 1.5, std::nan(""), kInf}) {
+        EXPECT_FALSE(filter.update(4.0, gain).has_value()) << "gain " << gain;
+    }
+    EXPECT_DOUBLE_EQ(filter.update(4.0, 1.0).value(), 4.0);
+}
+
+} // namespace
+} // namespace flexiv_hardware

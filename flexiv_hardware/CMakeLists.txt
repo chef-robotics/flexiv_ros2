@@ -24,6 +24,7 @@ add_library(
   SHARED
   src/flexiv_hardware_interface.cpp
   src/command_interface_claims.cpp
+  src/first_order_low_pass.cpp
 )
 
 target_include_directories(
@@ -66,6 +67,9 @@ if(BUILD_TESTING)
     test/command_interface_claims_test.cpp src/command_interface_claims.cpp)
   target_include_directories(command_interface_claims_test PRIVATE include)
   ament_target_dependencies(command_interface_claims_test hardware_interface)
+  ament_add_gtest(first_order_low_pass_test
+    test/first_order_low_pass_test.cpp src/first_order_low_pass.cpp)
+  target_include_directories(first_order_low_pass_test PRIVATE include)
 endif()
 
 # EXPORTS

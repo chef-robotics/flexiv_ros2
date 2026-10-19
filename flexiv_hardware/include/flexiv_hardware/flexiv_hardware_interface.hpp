@@ -35,6 +35,7 @@
 #include "flexiv/rdk/robot.hpp"
 
 #include "flexiv_hardware/command_interface_claims.hpp"
+#include "flexiv_hardware/first_order_low_pass.hpp"
 
 namespace flexiv_hardware {
 
@@ -88,6 +89,13 @@ public:
         const rclcpp::Time& time, const rclcpp::Duration& period) override;
 
 private:
+    /** Default for the hardware parameter `feedforward_time_constant` [s]. */
+    static constexpr double kDefaultFeedforwardTimeConstant = 0.02;
+    /** Stream failures tolerated before write() errors the hardware component. */
+    static constexpr size_t kMaxConsecutiveStreamFailures = 50;
+    /** Mode-recovery attempts before write() gives up and errors the component. */
+    static constexpr size_t kMaxConsecutiveModeRecoveries = 3;
+
     // Flexiv RDK
     std::unique_ptr<flexiv::rdk::Robot> robot_;
 
@@ -113,6 +121,12 @@ private:
 
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RtJointPositionCmd> rt_joint_position_cmds_;
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RtJointTorqueCmd> rt_joint_torque_cmds_;
+
+    /** Low-pass time constant [s] on a trajectory claim's feedforward; hardware parameter
+     * `feedforward_time_constant`, 0 disables it. */
+    double feedforward_time_constant_ {kDefaultFeedforwardTimeConstant};
+    std::vector<FirstOrderLowPass> feedforward_velocity_filters_;
+    std::vector<FirstOrderLowPass> feedforward_acceleration_filters_;
 
     // Robot states exported per active joint group.
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RobotStates> hw_flexiv_robot_states_by_group_;
@@ -144,14 +158,8 @@ private:
     /** Reset by the first write() cycle that streams successfully. */
     size_t consecutive_stream_failures_ {0};
 
-    /** Stream failures tolerated before write() errors the hardware component. */
-    static constexpr size_t kMaxConsecutiveStreamFailures = 50;
-
     /** Reset by the first write() cycle that finds the control mode already correct. */
     size_t consecutive_mode_recoveries_ {0};
-
-    /** Mode-recovery attempts before write() gives up and errors the component. */
-    static constexpr size_t kMaxConsecutiveModeRecoveries = 3;
 
     /**
      * Resolve which joint groups a set of command interface names fully claims, and with which
@@ -180,8 +188,17 @@ private:
     };
 
     /** Target of RDK joint `rdk_idx` from the commands of its group's position, velocity or
-     * trajectory `claim`. */
-    JointTarget commanded_target(uint8_t claim, size_t rdk_idx) const;
+     * trajectory `claim`, advancing the joint's feedforward filters. */
+    JointTarget commanded_target(
+        uint8_t claim, size_t rdk_idx, std::optional<double> feedforward_gain);
+
+    /** `command` through `filter`, or 0.0 (no feedforward) when there is no `gain`, or with a
+     * warning naming ROS joint `ros_idx` when the filter refuses the command or `gain`. */
+    double filter_feedforward(
+        FirstOrderLowPass& filter, double command, std::optional<double> gain, size_t ros_idx);
+
+    /** Drop every feedforward filter's state, so the next command seeds it. */
+    void reset_feedforward_filters();
 
     /** Handle a write() cycle whose commands are skipped because the robot is not operational,
      * e.g. E-stopped: log it, and drop the hold targets so they re-seed from the measured position

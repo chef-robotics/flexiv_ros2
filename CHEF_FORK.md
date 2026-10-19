@@ -48,6 +48,12 @@ Constraints worth knowing before designing against it:
   reads as a target at rest and trails by a speed-proportional lag.
   `[position, velocity]` is refused rather than half-served: a velocity
   feedforward without its acceleration overshoots more than none.
+- That feedforward is low-passed by the `feedforward_time_constant` hardware
+  parameter (seconds, default 0.02, 0 disables), so a velocity or
+  acceleration step at a trajectory splice reaches the motors as a ramp. The
+  position target is not filtered, so the filter adds no steady-state lag.
+  The default is an estimate from a one-joint model; replace it with the value
+  a logged move on the arm supports.
 - The RDK control mode is **global**: position on one arm and velocity on the
   other is fine, but not position on one and effort on the other. Effort
   requires every group claimed, or the unclaimed arm free-floats.
