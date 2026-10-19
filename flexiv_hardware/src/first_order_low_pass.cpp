@@ -6,6 +6,7 @@ namespace flexiv_hardware {
 
 double FirstOrderLowPass::gain(double time_constant, double period)
 {
+    // Not `<= 0.0`: NaN compares false, and must pass through rather than poison the state.
     if (!(time_constant > 0.0) || !(period > 0.0)) {
         return 1.0;
     }
