@@ -13,19 +13,31 @@ constexpr double kTimeConstant = 0.02;
 
 TEST(FirstOrderLowPassGain, ZeroTimeConstantPassesThrough)
 {
-    EXPECT_DOUBLE_EQ(FirstOrderLowPass::gain(0.0, kPeriod), 1.0);
-}
-
-TEST(FirstOrderLowPassGain, NonPositivePeriodPassesThrough)
-{
-    EXPECT_DOUBLE_EQ(FirstOrderLowPass::gain(kTimeConstant, 0.0), 1.0);
-    EXPECT_DOUBLE_EQ(FirstOrderLowPass::gain(kTimeConstant, -kPeriod), 1.0);
+    EXPECT_DOUBLE_EQ(FirstOrderLowPass::calculate_discrete_gain(0.0, kPeriod).value(), 1.0);
 }
 
 TEST(FirstOrderLowPassGain, FollowsThePeriodOverTimeConstantRatio)
 {
-    EXPECT_DOUBLE_EQ(
-        FirstOrderLowPass::gain(kTimeConstant, kPeriod), kPeriod / (kTimeConstant + kPeriod));
+    EXPECT_DOUBLE_EQ(FirstOrderLowPass::calculate_discrete_gain(kTimeConstant, kPeriod).value(),
+        kPeriod / (kTimeConstant + kPeriod));
+}
+
+TEST(FirstOrderLowPassGain, NonPositiveOrNonFinitePeriodIsRefused)
+{
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    for (const double period : {0.0, -kPeriod, std::nan(""), kInf}) {
+        EXPECT_FALSE(FirstOrderLowPass::calculate_discrete_gain(kTimeConstant, period).has_value())
+            << "period " << period;
+    }
+}
+
+TEST(FirstOrderLowPassGain, NegativeOrNonFiniteTimeConstantIsRefused)
+{
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    for (const double time_constant : {-kTimeConstant, std::nan(""), kInf}) {
+        EXPECT_FALSE(FirstOrderLowPass::calculate_discrete_gain(time_constant, kPeriod).has_value())
+            << "time constant " << time_constant;
+    }
 }
 
 TEST(FirstOrderLowPass, SeedsFromTheFirstSample)
@@ -45,7 +57,7 @@ TEST(FirstOrderLowPass, UnitGainPassesThrough)
 TEST(FirstOrderLowPass, SettlesOnAStepWithinFiveTimeConstants)
 {
     FirstOrderLowPass filter;
-    const double gain = FirstOrderLowPass::gain(kTimeConstant, kPeriod);
+    const double gain = FirstOrderLowPass::calculate_discrete_gain(kTimeConstant, kPeriod).value();
     filter.update(0.0, gain);
     double value = 0.0;
     const int steps = static_cast<int>(5.0 * kTimeConstant / kPeriod);
@@ -60,7 +72,7 @@ TEST(FirstOrderLowPass, SettlesOnAStepWithinFiveTimeConstants)
 TEST(FirstOrderLowPass, OneTimeConstantReachesAboutSixtyThreePercent)
 {
     FirstOrderLowPass filter;
-    const double gain = FirstOrderLowPass::gain(kTimeConstant, kPeriod);
+    const double gain = FirstOrderLowPass::calculate_discrete_gain(kTimeConstant, kPeriod).value();
     filter.update(0.0, gain);
     double value = 0.0;
     const int steps = static_cast<int>(kTimeConstant / kPeriod);

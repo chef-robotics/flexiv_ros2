@@ -9,8 +9,12 @@ namespace flexiv_hardware {
 class FirstOrderLowPass
 {
 public:
-    /** Gain for a time constant and period [s]; 1.0 (pass-through) unless both are positive. */
-    static double gain(double time_constant, double period);
+    /**
+     * Per-step gain period / (time_constant + period) for a time constant [s] and sample period
+     * [s]; 1.0 (pass-through) for a zero time constant. std::nullopt unless the time constant is
+     * finite and non-negative and the period finite and positive.
+     */
+    static std::optional<double> calculate_discrete_gain(double time_constant, double period);
 
     /**
      * Filter `sample` and return the new output, or std::nullopt, leaving the filter unchanged,

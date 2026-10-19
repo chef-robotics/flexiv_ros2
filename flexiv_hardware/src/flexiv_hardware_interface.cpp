@@ -872,7 +872,7 @@ bool FlexivHardwareInterface::is_joint_commanded(uint8_t claim, size_t rdk_idx) 
 }
 
 FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
-    uint8_t claim, size_t rdk_idx, double feedforward_gain)
+    uint8_t claim, size_t rdk_idx, std::optional<double> feedforward_gain)
 {
     const size_t ros_idx = rdk_to_ros_map_[rdk_idx];
     if (claim == kInterfacePosition) {
@@ -891,14 +891,18 @@ FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
 }
 
 double FlexivHardwareInterface::filter_feedforward(
-    FirstOrderLowPass& filter, double command, double gain, size_t ros_idx)
+    FirstOrderLowPass& filter, double command, std::optional<double> gain, size_t ros_idx)
 {
-    if (const std::optional<double> filtered = filter.update(command, gain)) {
+    // write() has already warned about a missing gain.
+    if (!gain) {
+        return 0.0;
+    }
+    if (const std::optional<double> filtered = filter.update(command, *gain)) {
         return *filtered;
     }
     RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
         "Dropped feedforward on '%s': command %f or filter gain %f is invalid",
-        info_.joints[ros_idx].name.c_str(), command, gain);
+        info_.joints[ros_idx].name.c_str(), command, *gain);
     return 0.0;
 }
 
@@ -1051,8 +1055,14 @@ hardware_interface::return_type FlexivHardwareInterface::write(
     auto& target_acc = target_acc_buffer_;
     auto& target_torque = target_torque_buffer_;
 
-    const double feedforward_gain
-        = FirstOrderLowPass::gain(feedforward_time_constant_, period.seconds());
+    const std::optional<double> feedforward_gain = FirstOrderLowPass::calculate_discrete_gain(
+        feedforward_time_constant_, period.seconds());
+    if (!feedforward_gain) {
+        RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
+            "No feedforward filter gain for time constant %f s and period %f s; streaming no "
+            "velocity or acceleration feedforward",
+            feedforward_time_constant_, period.seconds());
+    }
 
     bool targets_valid = true;
     size_t offset = 0;
