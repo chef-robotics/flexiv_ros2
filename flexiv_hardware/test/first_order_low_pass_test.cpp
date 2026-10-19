@@ -31,15 +31,15 @@ TEST(FirstOrderLowPassGain, FollowsThePeriodOverTimeConstantRatio)
 TEST(FirstOrderLowPass, SeedsFromTheFirstSample)
 {
     FirstOrderLowPass filter;
-    EXPECT_DOUBLE_EQ(filter.update(1.5, 0.1), 1.5);
+    EXPECT_DOUBLE_EQ(filter.update(1.5, 0.1).value(), 1.5);
 }
 
 TEST(FirstOrderLowPass, UnitGainPassesThrough)
 {
     FirstOrderLowPass filter;
     filter.update(0.0, 1.0);
-    EXPECT_DOUBLE_EQ(filter.update(2.0, 1.0), 2.0);
-    EXPECT_DOUBLE_EQ(filter.update(-3.0, 1.0), -3.0);
+    EXPECT_DOUBLE_EQ(filter.update(2.0, 1.0).value(), 2.0);
+    EXPECT_DOUBLE_EQ(filter.update(-3.0, 1.0).value(), -3.0);
 }
 
 TEST(FirstOrderLowPass, SettlesOnAStepWithinFiveTimeConstants)
@@ -50,7 +50,7 @@ TEST(FirstOrderLowPass, SettlesOnAStepWithinFiveTimeConstants)
     double value = 0.0;
     const int steps = static_cast<int>(5.0 * kTimeConstant / kPeriod);
     for (int i = 0; i < steps; ++i) {
-        value = filter.update(1.0, gain);
+        value = filter.update(1.0, gain).value();
     }
     // One time constant in leaves 1/e of the step; five leave under 1%.
     EXPECT_NEAR(value, 1.0, 0.01);
@@ -65,7 +65,7 @@ TEST(FirstOrderLowPass, OneTimeConstantReachesAboutSixtyThreePercent)
     double value = 0.0;
     const int steps = static_cast<int>(kTimeConstant / kPeriod);
     for (int i = 0; i < steps; ++i) {
-        value = filter.update(1.0, gain);
+        value = filter.update(1.0, gain).value();
     }
     EXPECT_NEAR(value, 1.0 - std::exp(-1.0), 0.03);
 }
@@ -76,24 +76,35 @@ TEST(FirstOrderLowPass, ResetReseedsFromTheNextSample)
     filter.update(0.0, 0.5);
     filter.update(10.0, 0.5);
     filter.reset();
-    EXPECT_DOUBLE_EQ(filter.update(-4.0, 0.5), -4.0);
+    EXPECT_DOUBLE_EQ(filter.update(-4.0, 0.5).value(), -4.0);
 }
 
-TEST(FirstOrderLowPass, NonFiniteSampleHoldsTheOutput)
+TEST(FirstOrderLowPass, NonFiniteSampleIsRefusedAndLeavesTheOutput)
 {
     FirstOrderLowPass filter;
     filter.update(2.0, 0.5);
-    EXPECT_DOUBLE_EQ(filter.update(std::nan(""), 0.5), 2.0);
-    EXPECT_DOUBLE_EQ(filter.update(std::numeric_limits<double>::infinity(), 0.5), 2.0);
-    EXPECT_DOUBLE_EQ(filter.update(4.0, 0.5), 3.0);
+    EXPECT_FALSE(filter.update(std::nan(""), 0.5).has_value());
+    EXPECT_FALSE(filter.update(std::numeric_limits<double>::infinity(), 0.5).has_value());
+    EXPECT_DOUBLE_EQ(filter.update(4.0, 0.5).value(), 3.0);
 }
 
 TEST(FirstOrderLowPass, NonFiniteFirstSampleLeavesTheFilterUnseeded)
 {
     FirstOrderLowPass filter;
-    EXPECT_DOUBLE_EQ(filter.update(std::nan(""), 0.5), 0.0);
-    EXPECT_DOUBLE_EQ(filter.update(-std::numeric_limits<double>::infinity(), 0.5), 0.0);
-    EXPECT_DOUBLE_EQ(filter.update(1.5, 0.5), 1.5);
+    EXPECT_FALSE(filter.update(std::nan(""), 0.5).has_value());
+    EXPECT_FALSE(filter.update(-std::numeric_limits<double>::infinity(), 0.5).has_value());
+    EXPECT_DOUBLE_EQ(filter.update(1.5, 0.5).value(), 1.5);
+}
+
+TEST(FirstOrderLowPass, GainOutsideZeroToOneIsRefusedAndLeavesTheOutput)
+{
+    FirstOrderLowPass filter;
+    filter.update(2.0, 0.5);
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    for (const double gain : {0.0, -0.5, 1.5, std::nan(""), kInf}) {
+        EXPECT_FALSE(filter.update(4.0, gain).has_value()) << "gain " << gain;
+    }
+    EXPECT_DOUBLE_EQ(filter.update(4.0, 1.0).value(), 4.0);
 }
 
 } // namespace

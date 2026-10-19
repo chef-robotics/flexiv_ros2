@@ -13,17 +13,18 @@ double FirstOrderLowPass::gain(double time_constant, double period)
     return period / (time_constant + period);
 }
 
-double FirstOrderLowPass::update(double sample, double gain)
+std::optional<double> FirstOrderLowPass::update(double sample, double gain)
 {
-    if (!std::isfinite(sample)) {
-        return output_.value_or(0.0);
+    // Written so that a NaN gain fails the range check too.
+    if (!std::isfinite(sample) || !(gain > 0.0 && gain <= 1.0)) {
+        return std::nullopt;
     }
     if (!output_) {
         output_ = sample;
     } else {
         *output_ += gain * (sample - *output_);
     }
-    return *output_;
+    return output_;
 }
 
 void FirstOrderLowPass::reset()

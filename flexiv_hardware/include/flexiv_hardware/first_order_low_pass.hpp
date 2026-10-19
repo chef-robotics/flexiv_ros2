@@ -13,15 +13,15 @@ public:
     static double gain(double time_constant, double period);
 
     /**
-     * Filter `sample` and return the new output. A non-finite sample is ignored: the output holds,
-     * or is 0.0 while the filter is still unseeded.
+     * Filter `sample` and return the new output, or std::nullopt, leaving the filter unchanged,
+     * when `sample` is not finite or `gain` is not in (0, 1].
      */
-    double update(double sample, double gain);
+    std::optional<double> update(double sample, double gain);
 
     void reset();
 
 private:
-    /** Last output y; empty until the first finite sample after construction or reset(). */
+    /** Last output y; empty until the first valid update() after construction or reset(). */
     std::optional<double> output_;
 };
 

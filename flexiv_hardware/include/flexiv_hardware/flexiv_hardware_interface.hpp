@@ -191,6 +191,11 @@ private:
      * trajectory `claim`, advancing the joint's feedforward filters. */
     JointTarget commanded_target(uint8_t claim, size_t rdk_idx, double feedforward_gain);
 
+    /** `command` through `filter`, or 0.0 (no feedforward) with a warning naming ROS joint
+     * `ros_idx` when the filter refuses the command or `gain`. */
+    double filter_feedforward(
+        FirstOrderLowPass& filter, double command, double gain, size_t ros_idx);
+
     /** Drop every feedforward filter's state, so the next command seeds it. */
     void reset_feedforward_filters();
 

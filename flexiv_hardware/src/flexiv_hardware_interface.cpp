@@ -884,10 +884,22 @@ FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
         return {hw_states_joint_positions_[ros_idx], hw_commands_joint_velocities_[ros_idx], 0.0};
     }
     return {hw_commands_joint_positions_[ros_idx],
-        feedforward_velocity_filters_[ros_idx].update(
-            hw_commands_joint_velocities_[ros_idx], feedforward_gain),
-        feedforward_acceleration_filters_[ros_idx].update(
-            hw_commands_joint_accelerations_[ros_idx], feedforward_gain)};
+        filter_feedforward(feedforward_velocity_filters_[ros_idx],
+            hw_commands_joint_velocities_[ros_idx], feedforward_gain, ros_idx),
+        filter_feedforward(feedforward_acceleration_filters_[ros_idx],
+            hw_commands_joint_accelerations_[ros_idx], feedforward_gain, ros_idx)};
+}
+
+double FlexivHardwareInterface::filter_feedforward(
+    FirstOrderLowPass& filter, double command, double gain, size_t ros_idx)
+{
+    if (const std::optional<double> filtered = filter.update(command, gain)) {
+        return *filtered;
+    }
+    RCLCPP_WARN_THROTTLE(getLogger(), log_clock_, 1000,
+        "Dropped feedforward on '%s': command %f or filter gain %f is invalid",
+        info_.joints[ros_idx].name.c_str(), command, gain);
+    return 0.0;
 }
 
 void FlexivHardwareInterface::reset_feedforward_filters()
