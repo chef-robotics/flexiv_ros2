@@ -162,18 +162,6 @@ GroupDofList determine_active_groups(
     return active_groups;
 }
 
-/** Interface a joint group ends up claimed with, given what a mode switch starts and stops. */
-uint8_t next_claimed_interface(uint8_t current, uint8_t starting, uint8_t stopping)
-{
-    if (starting != flexiv_hardware::kInterfaceNone) {
-        return starting;
-    }
-    if (stopping != flexiv_hardware::kInterfaceNone) {
-        return flexiv_hardware::kInterfaceNone;
-    }
-    return current;
-}
-
 }
 
 namespace flexiv_hardware {
@@ -753,50 +741,36 @@ bool FlexivHardwareInterface::resolve_claimed_groups(
     const std::vector<std::string>& keys, std::array<uint8_t, kMaxJointGroups>& claimed) const
 {
     claimed.fill(kInterfaceNone);
-    std::array<size_t, kMaxJointGroups> claimed_counts {};
 
+    std::vector<std::string> group_joint_names;
     size_t offset = 0;
     for (size_t g = 0; g < active_groups_.size(); ++g) {
+        group_joint_names.clear();
         for (size_t k = 0; k < active_groups_[g].second; ++k) {
-            const std::string& joint_name = info_.joints[rdk_to_ros_map_[offset + k]].name;
-            for (const auto& key : keys) {
-                uint8_t interface_type = kInterfaceNone;
-                if (key == joint_name + "/" + hardware_interface::HW_IF_POSITION) {
-                    interface_type = kInterfacePosition;
-                } else if (key == joint_name + "/" + hardware_interface::HW_IF_VELOCITY) {
-                    interface_type = kInterfaceVelocity;
-                } else if (key == joint_name + "/" + hardware_interface::HW_IF_EFFORT) {
-                    interface_type = kInterfaceEffort;
-                } else {
-                    continue;
-                }
-
-                if (claimed[g] == kInterfaceNone) {
-                    claimed[g] = interface_type;
-                } else if (claimed[g] != interface_type) {
-                    RCLCPP_ERROR(getLogger(),
-                        "Joint group %s would be claimed with more than one command interface type "
-                        "at once. All joints of one arm or external axis group must use the same "
-                        "interface type.",
-                        joint_group_name_string(active_groups_[g].first).c_str());
-                    return false;
-                }
-                claimed_counts[g]++;
-            }
+            group_joint_names.push_back(info_.joints[rdk_to_ros_map_[offset + k]].name);
         }
         offset += active_groups_[g].second;
-    }
 
-    // A joint group is the smallest unit RDK accepts a command for, so it must be claimed whole.
-    for (size_t g = 0; g < active_groups_.size(); ++g) {
-        if (claimed_counts[g] != 0 && claimed_counts[g] != active_groups_[g].second) {
-            RCLCPP_ERROR(getLogger(),
-                "Joint group %s would have %zu of its %zu joints claimed. Claim all joints of a "
-                "group, or none of them.",
-                joint_group_name_string(active_groups_[g].first).c_str(), claimed_counts[g],
-                active_groups_[g].second);
-            return false;
+        const GroupClaim claim = resolve_group_claim(keys, group_joint_names);
+        switch (claim.error) {
+            case GroupClaimError::kNone:
+                break;
+            case GroupClaimError::kMixedTypes:
+                RCLCPP_ERROR(getLogger(),
+                    "Joint group %s would be claimed with more than one command interface type "
+                    "at once. All joints of one arm or external axis group must use the same "
+                    "interface type.",
+                    joint_group_name_string(active_groups_[g].first).c_str());
+                return false;
+            case GroupClaimError::kPartialGroup:
+                RCLCPP_ERROR(getLogger(),
+                    "Joint group %s would have %zu of its %zu joints claimed. Claim all joints of "
+                    "a group, or none of them.",
+                    joint_group_name_string(active_groups_[g].first).c_str(), claim.claimed_joints,
+                    active_groups_[g].second);
+                return false;
         }
+        claimed[g] = claim.type;
     }
 
     return true;
