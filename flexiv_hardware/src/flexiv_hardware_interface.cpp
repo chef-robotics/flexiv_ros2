@@ -926,14 +926,16 @@ FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
         // the position interface has no velocity to track.
         return {hw_states_joint_positions_[ros_idx], hw_commands_joint_velocities_[ros_idx], 0.0};
     }
-    return clamp_feedforward(rdk_idx,
-        {hw_commands_joint_positions_[ros_idx],
-            filter_feedforward(feedforward_velocity_filters_[ros_idx],
-                is_holding ? 0.0 : hw_commands_joint_velocities_[ros_idx], feedforward_gain,
-                ros_idx),
-            filter_feedforward(feedforward_acceleration_filters_[ros_idx],
-                is_holding ? 0.0 : hw_commands_joint_accelerations_[ros_idx], feedforward_gain,
-                ros_idx)});
+    const double velocity_command = is_holding ? 0.0 : hw_commands_joint_velocities_[ros_idx];
+    const double acceleration_command
+        = is_holding ? 0.0 : hw_commands_joint_accelerations_[ros_idx];
+    const double filtered_velocity = filter_feedforward(
+        feedforward_velocity_filters_[ros_idx], velocity_command, feedforward_gain, ros_idx);
+    const double filtered_acceleration
+        = filter_feedforward(feedforward_acceleration_filters_[ros_idx], acceleration_command,
+            feedforward_gain, ros_idx);
+    return clamp_feedforward(
+        rdk_idx, {hw_commands_joint_positions_[ros_idx], filtered_velocity, filtered_acceleration});
 }
 
 FlexivHardwareInterface::JointTarget FlexivHardwareInterface::clamp_feedforward(
