@@ -91,6 +91,8 @@ public:
 private:
     /** Default for the hardware parameter `feedforward_time_constant` [s]. */
     static constexpr double kDefaultFeedforwardTimeConstant = 0.02;
+    /** Default for the hardware parameter `feedforward_max_acceleration` [rad/s^2]. */
+    static constexpr double kDefaultFeedforwardMaxAcceleration = 15.0;
     /** Stream failures tolerated before write() errors the hardware component. */
     static constexpr size_t kMaxConsecutiveStreamFailures = 50;
     /** Mode-recovery attempts before write() gives up and errors the component. */
@@ -132,6 +134,11 @@ private:
     double feedforward_time_constant_ {kDefaultFeedforwardTimeConstant};
     std::vector<FirstOrderLowPass> feedforward_velocity_filters_;
     std::vector<FirstOrderLowPass> feedforward_acceleration_filters_;
+
+    // Per-joint bounds on a trajectory claim's feedforward, in RDK order: the robot's dq_max
+    // [rad/s] and `feedforward_max_acceleration` [rad/s^2].
+    std::vector<double> feedforward_velocity_limits_;
+    std::vector<double> feedforward_acceleration_limits_;
 
     // Robot states exported per active joint group.
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RobotStates> hw_flexiv_robot_states_by_group_;
@@ -202,6 +209,16 @@ private:
      * warning naming ROS joint `ros_idx` when the filter refuses the command or `gain`. */
     double filter_feedforward(
         FirstOrderLowPass& filter, double command, std::optional<double> gain, size_t ros_idx);
+
+    /**
+     * Clamp the feedforward of a joint target to the robot's limits, logging when it clamps.
+     * @param[in] rdk_idx RDK index of the joint, selecting its limits.
+     * @param[in] target The joint's target, with the feedforward to clamp.
+     * @return `target` with its velocity and acceleration clamped to the joint's
+     *         feedforward_velocity_limits_ and feedforward_acceleration_limits_; the position is
+     *         unchanged.
+     */
+    JointTarget clamp_joint_target_feedforward(size_t rdk_idx, const JointTarget& target);
 
     /** Drop every feedforward filter's state, so the next command seeds it. */
     void reset_feedforward_filters();
