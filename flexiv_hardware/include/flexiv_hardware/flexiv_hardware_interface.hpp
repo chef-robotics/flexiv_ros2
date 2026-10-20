@@ -188,9 +188,10 @@ private:
     };
 
     /** Target of RDK joint `rdk_idx` from the commands of its group's position, velocity or
-     * trajectory `claim`, advancing the joint's feedforward filters. */
+     * trajectory `claim`, advancing the joint's feedforward filters with no feedforward input
+     * while the group `is_holding`. */
     JointTarget commanded_target(
-        uint8_t claim, size_t rdk_idx, std::optional<double> feedforward_gain);
+        uint8_t claim, size_t rdk_idx, bool is_holding, std::optional<double> feedforward_gain);
 
     /** `command` through `filter`, or 0.0 (no feedforward) when there is no `gain`, or with a
      * warning naming ROS joint `ros_idx` when the filter refuses the command or `gain`. */

@@ -54,6 +54,10 @@ Constraints worth knowing before designing against it:
   position target is not filtered, so the filter adds no steady-state lag.
   The default is an estimate from a one-joint model; replace it with the value
   a logged move on the arm supports.
+- A group whose position targets did not change since the last cycle is
+  holding, and its feedforward input is zero. The JTC keeps commanding its
+  last point after a trajectory ends, acceleration included; streamed at rest,
+  that would hold the arm off target in proportion to the final deceleration.
 - The RDK control mode is **global**: position on one arm and velocity on the
   other is fine, but not position on one and effort on the other. Effort
   requires every group claimed, or the unclaimed arm free-floats.
