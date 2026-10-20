@@ -893,7 +893,6 @@ FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
 double FlexivHardwareInterface::filter_feedforward(
     FirstOrderLowPass& filter, double command, std::optional<double> gain, size_t ros_idx)
 {
-    // write() has already warned about a missing gain.
     if (!gain) {
         return 0.0;
     }
