@@ -218,7 +218,7 @@ private:
      *         feedforward_velocity_limits_ and feedforward_acceleration_limits_; the position is
      *         unchanged.
      */
-    JointTarget clamp_feedforward(size_t rdk_idx, const JointTarget& target);
+    JointTarget clamp_joint_target_feedforward(size_t rdk_idx, const JointTarget& target);
 
     /** Drop every feedforward filter's state, so the next command seeds it. */
     void reset_feedforward_filters();

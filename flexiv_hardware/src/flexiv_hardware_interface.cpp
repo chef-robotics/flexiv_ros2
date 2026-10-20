@@ -934,11 +934,11 @@ FlexivHardwareInterface::JointTarget FlexivHardwareInterface::commanded_target(
     const double filtered_acceleration
         = filter_feedforward(feedforward_acceleration_filters_[ros_idx], acceleration_command,
             feedforward_gain, ros_idx);
-    return clamp_feedforward(
+    return clamp_joint_target_feedforward(
         rdk_idx, {hw_commands_joint_positions_[ros_idx], filtered_velocity, filtered_acceleration});
 }
 
-FlexivHardwareInterface::JointTarget FlexivHardwareInterface::clamp_feedforward(
+FlexivHardwareInterface::JointTarget FlexivHardwareInterface::clamp_joint_target_feedforward(
     size_t rdk_idx, const JointTarget& target)
 {
     const double velocity_limit = feedforward_velocity_limits_[rdk_idx];
