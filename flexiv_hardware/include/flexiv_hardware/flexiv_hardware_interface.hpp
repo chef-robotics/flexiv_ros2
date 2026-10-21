@@ -93,6 +93,8 @@ private:
     static constexpr double kDefaultFeedforwardTimeConstant = 0.02;
     /** Default for the hardware parameter `feedforward_max_acceleration` [rad/s^2]. */
     static constexpr double kDefaultFeedforwardMaxAcceleration = 15.0;
+    /** Default for the hardware parameter `rdk_thread_priority`. */
+    static constexpr int kDefaultRdkThreadPriority = 49;
     /** Stream failures tolerated before write() errors the hardware component. */
     static constexpr size_t kMaxConsecutiveStreamFailures = 50;
     /** Mode-recovery attempts before write() gives up and errors the component. */
@@ -139,6 +141,10 @@ private:
     // [rad/s] and `feedforward_max_acceleration` [rad/s^2].
     std::vector<double> feedforward_velocity_limits_;
     std::vector<double> feedforward_acceleration_limits_;
+
+    /** SCHED_FIFO priority of the RDK's transport threads; hardware parameter
+     * `rdk_thread_priority`, 0 leaves them on the default policy. */
+    int rdk_thread_priority_ {kDefaultRdkThreadPriority};
 
     // Robot states exported per active joint group.
     std::map<flexiv::rdk::JointGroup, flexiv::rdk::RobotStates> hw_flexiv_robot_states_by_group_;
@@ -222,6 +228,9 @@ private:
 
     /** Drop every feedforward filter's state, so the next command seeds it. */
     void reset_feedforward_filters();
+
+    /** Put the RDK's transport threads on SCHED_FIFO at rdk_thread_priority_, unless it is 0. */
+    void apply_rdk_thread_priority();
 
     /** Handle a write() cycle whose commands are skipped because the robot is not operational,
      * e.g. E-stopped: log it, and drop the hold targets so they re-seed from the measured position
